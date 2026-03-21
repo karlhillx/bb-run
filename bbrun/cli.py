@@ -7,9 +7,10 @@ import sys
 import argparse
 from pathlib import Path
 
-from .validator import PipelineValidator
+from . import __version__
 from .docker import DockerRunner
 from .host import HostRunner
+from .validator import PipelineValidator
 
 
 def list_targets(repo_path: Path) -> int:
@@ -142,9 +143,9 @@ Examples:
         help='Verbose output'
     )
     parser.add_argument(
-        '--version',
-        action='version',
-        version='%(prog)s 0.1.0'
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     
     args = parser.parse_args()

@@ -28,7 +28,7 @@ jobs:
     
     - name: Run tests
       run: |
-        pytest --cov=bbrun --cov-report=xml tests/
+        python -m pytest --cov=bbrun --cov-report=xml tests/
     
     - name: Upload coverage
       uses: codecov/codecov-action@v4

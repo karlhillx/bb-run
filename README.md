@@ -5,16 +5,17 @@
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://pypi.org/project/bb-run/)
 [![Test](https://github.com/karlhillx/bb-run/actions/workflows/test.yml/badge.svg)](https://github.com/karlhillx/bb-run/actions/workflows/test.yml)
 
-**Run Bitbucket Pipelines locally.** bb-run faithfully executes your `bitbucket-pipelines.yml` on your local machine using Docker or directly on your host.
+**Run Bitbucket Pipelines locally.** bb-run reads `bitbucket-pipelines.yml` and runs it in **Docker** (default) or on the **host**, including **parallel** steps, **fail-fast**, and **artifacts**.
 
 ## Why bb-run?
 
 - **Test before pushing** - Catch CI failures locally before committing
 - **Fast iteration** - No waiting for Bitbucket's pipeline queue
-- **Debug easily** - Run in verbose mode, inspect outputs directly
-- **Two modes** - Docker for Bitbucket-accurate execution; host mode runs on your machine with **no Docker**
-- **Parallel steps** - `parallel:` groups run **concurrently** in both modes; group `fail-fast: true` and per-step `fail-fast` behave like Bitbucket (siblings are **terminated** after a failing step when fail-fast applies)
-- **Lightweight** - Install needs **Python 3.12+** and **PyYAML**; **Docker** is only required for `--mode docker` (default)
+- **Debug easily** - Run in verbose mode and inspect output directly
+- **Two modes** - Docker for an environment closer to Bitbucket; host mode needs **no Docker**
+- **Parallel steps** - `parallel:` groups run concurrently; group and per-step `fail-fast` stop sibling processes when a failing step demands it
+- **Artifacts** - Shared / scoped uploads, `capture-on`, and selective `download` (see below)
+- **Small install** - One runtime dependency: **PyYAML** (see `pyproject.toml`). Docker is only required for `--mode docker`
 
 ## Installation
 
@@ -32,7 +33,7 @@ If you prefer not to use a project virtualenv:
 pipx install bb-run
 ```
 
-Homebrew distribution would require a separate tap repository (e.g. `github.com/karlhillx/homebrew-tap` with a formula); that tap is not set up yet, so use **pip** or **pipx** above.
+There is no Homebrew tap yet; use **pip** or **pipx** for installs.
 
 ### from source
 
@@ -40,6 +41,12 @@ Homebrew distribution would require a separate tap repository (e.g. `github.com/
 git clone https://github.com/karlhillx/bb-run.git
 cd bb-run
 pip install -e .
+```
+
+To run tests or Ruff locally, use the **dev** extra (includes pytest, pytest-cov, and ruff):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
@@ -177,9 +184,9 @@ bb-run --repo /path/to/repo
 
 ## Requirements
 
-- Python 3.12+
-- PyYAML
-- Docker (for Docker mode)
+- **Python** 3.12+ (`requires-python` in `pyproject.toml`)
+- **PyYAML** 6.x (installed automatically with `bb-run`)
+- **Docker** CLI (optional; only for `--mode docker`, the default)
 
 ### Local development (virtualenv)
 
@@ -203,13 +210,15 @@ bb-run sets these Bitbucket-specific environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `BITBUCKET_BUILD_NUMBER` | Build number (set to "1") |
-| `BITBUCKET_CLONE_DIR` | Repository path |
-| `BITBUCKET_COMMIT` | Git commit SHA |
-| `BITBUCKET_BRANCH` | Branch name |
-| `BITBUCKET_REPO_SLUG` | Repository name |
-| `BITBUCKET_REPO_UUID` | Unique run ID |
-| `BITBUCKET_WORKSPACE` | Workspace (set to "local") |
+| `BITBUCKET_BUILD_NUMBER` | Build number (set to `"1"`) |
+| `BITBUCKET_CLONE_DIR` | Repo root on the host; in Docker mode the path **inside** the container (`/opt/atlassian/pipelines/agent/build`) |
+| `BITBUCKET_COMMIT` | Git commit SHA (or `local` if unavailable) |
+| `BITBUCKET_BRANCH` | Branch name (from `--branch` or default) |
+| `BITBUCKET_REPO_SLUG` | Repository directory name |
+| `BITBUCKET_REPO_UUID` | Unique run ID for this process |
+| `BITBUCKET_WORKSPACE` | Set to `"local"` |
+| `BITBUCKET_PARALLEL_STEP` | Zero-based index inside a `parallel:` group (parallel steps only) |
+| `BITBUCKET_PARALLEL_STEP_COUNT` | Number of steps in that parallel group (parallel steps only) |
 
 ## Troubleshooting
 

@@ -5,12 +5,12 @@ from pathlib import Path
 import yaml
 
 from bbrun.artifacts import (
+    DOWNLOAD_ALL_PRIOR_SHARED,
     ArtifactSession,
     expand_artifact_files,
     iter_upload_specs,
     parse_download_rule,
     should_capture,
-    _ALL_DOWNLOAD,
 )
 from bbrun.host import HostRunner
 
@@ -43,7 +43,7 @@ def test_iter_upload_specs_upload_block():
 
 
 def test_parse_download_rule():
-    assert parse_download_rule({}) is _ALL_DOWNLOAD
+    assert parse_download_rule({}) is DOWNLOAD_ALL_PRIOR_SHARED
     assert parse_download_rule({"artifacts": {"download": False}}) is False
     assert parse_download_rule({"artifacts": {"download": ["A", "B"]}}) == [
         "A",

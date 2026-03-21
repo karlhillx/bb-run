@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
-# Sentinel: restore all shared layers from prior steps
-_ALL_DOWNLOAD = object()
+# Sentinel: restore all shared layers from prior steps (public for tests / introspection)
+DOWNLOAD_ALL_PRIOR_SHARED = object()
 
 
 @dataclass
@@ -124,21 +124,21 @@ def _list_str(raw: Any) -> List[str]:
 def parse_download_rule(step: Dict[str, Any]) -> Union[object, bool, List[str]]:
     """
     Return:
-      _ALL_DOWNLOAD — restore all prior shared layers (default).
+      DOWNLOAD_ALL_PRIOR_SHARED — restore all prior shared layers (default).
       False — download: false
-      list of strings — selective by artifact name (and unnamed layers if list empty? no — names only).
+      list of strings — selective restore by shared artifact ``name``.
     """
     raw = step.get("artifacts")
     if not isinstance(raw, dict) or "download" not in raw:
-        return _ALL_DOWNLOAD
+        return DOWNLOAD_ALL_PRIOR_SHARED
     d = raw["download"]
     if d is False:
         return False
     if d is True or d is None:
-        return _ALL_DOWNLOAD
+        return DOWNLOAD_ALL_PRIOR_SHARED
     if isinstance(d, list):
         return [str(x) for x in d]
-    return _ALL_DOWNLOAD
+    return DOWNLOAD_ALL_PRIOR_SHARED
 
 
 def should_capture(capture_on: str, step_ok: bool) -> bool:
@@ -261,7 +261,7 @@ class ArtifactSession:
         if rule is False:
             print("📥 Artifacts: skipping restore (artifacts.download: false)")
             return
-        if rule is _ALL_DOWNLOAD:
+        if rule is DOWNLOAD_ALL_PRIOR_SHARED:
             for layer in self.shared_layers:
                 merge_layer_into_repo(layer.root, self.repo)
             if self.shared_layers:

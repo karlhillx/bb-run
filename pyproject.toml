@@ -16,11 +16,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "PyYAML>=6.0",
+    "PyYAML>=6.0,<7",
 ]
 
 [project.optional-dependencies]
-# pytest-cov registers --cov / --cov-report (needed for CI and coverage runs)
+# CI installs ``.[dev]``; pytest-cov supplies ``--cov`` / ``--cov-report``.
 test = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
@@ -33,6 +33,8 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/karlhillx/bb-run"
+Repository = "https://github.com/karlhillx/bb-run"
+Issues = "https://github.com/karlhillx/bb-run/issues"
 
 [project.scripts]
 bb-run = "bbrun.cli:main"
@@ -53,3 +55,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
