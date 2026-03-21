@@ -2,12 +2,30 @@
 Docker Runner - Executes pipeline steps in Docker containers
 """
 
+import functools
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from .validator import PipelineValidator
+
+
+@functools.lru_cache(maxsize=1)
+def _docker_pull_supports_progress_flag() -> bool:
+    """True if this Docker CLI accepts `docker pull --progress`."""
+    try:
+        r = subprocess.run(
+            ["docker", "pull", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        combined = (r.stdout or "") + (r.stderr or "")
+        return r.returncode == 0 and "--progress" in combined
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 class DockerRunner:
@@ -40,13 +58,41 @@ class DockerRunner:
         return result.returncode == 0
     
     def _pull_image(self, image: str) -> bool:
-        """Pull a Docker image (streams docker pull progress to the terminal)."""
-        print(f"Pulling Docker image: {image}")
-        # Do not capture output: `docker pull` draws progress bars on stderr when connected to a TTY.
-        result = subprocess.run(['docker', 'pull', image])
-        if result.returncode != 0:
+        """Pull a Docker image; stream Docker's own progress to the terminal."""
+        print(f"Pulling Docker image: {image}", flush=True)
+        interactive = sys.stderr.isatty()
+        if interactive:
+            print(
+                "Tip: each fs layer can take a while; lines update when a layer completes.",
+                flush=True,
+            )
+
+        cmd = ["docker", "pull"]
+        if _docker_pull_supports_progress_flag():
+            # tty: animated bars when stderr is a real terminal; plain: steady line-based output.
+            cmd.extend(["--progress", "tty" if interactive else "plain"])
+        cmd.append(image)
+
+        env = os.environ.copy()
+        if interactive:
+            # Editors/CI often set CI=1, which makes Docker suppress TTY-style progress.
+            env.pop("CI", None)
+
+        proc = subprocess.Popen(cmd, env=env)
+        # Heartbeat: plain progress can look "stuck" on one line for minutes on large layers.
+        while proc.poll() is None:
+            try:
+                proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                print(
+                    "  … still pulling (large images can take several minutes)",
+                    flush=True,
+                )
+
+        ok = proc.returncode == 0
+        if not ok:
             print(f"Failed to pull image: {image}")
-        return result.returncode == 0
+        return ok
     
     def _build_env(self, branch: str) -> Dict[str, str]:
         """Build environment variables for the container."""
