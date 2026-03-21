@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/bb-run.svg)](https://pypi.org/project/bb-run/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python versions](https://img.shields.io/pypi/pyversions/bb-run.svg)](https://pypi.org/project/bb-run/)
+[![Python](https://img.shields.io/pypi/pyversions/bb-run.svg?label=Python)](https://pypi.org/project/bb-run/)
 [![Test](https://github.com/karlhillx/bb-run/actions/workflows/test.yml/badge.svg)](https://github.com/karlhillx/bb-run/actions/workflows/test.yml)
 
 **Run Bitbucket Pipelines locally.** bb-run faithfully executes your `bitbucket-pipelines.yml` on your local machine using Docker or directly on your host.
