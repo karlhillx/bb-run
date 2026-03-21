@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bb-run"
-version = "0.1.0"
+version = "1.0.0"
 description = "Run Bitbucket Pipelines locally"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Karl Hill", email = "karlhillx@gmail.com" }]
 dependencies = [
@@ -32,8 +32,12 @@ Homepage = "https://github.com/karlhillx/bb-run"
 [project.scripts]
 bb-run = "bbrun.cli:main"
 
+[tool.setuptools]
+license-files = ["LICENSE"]
+
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["bbrun*"]
 
 [tool.setuptools.package-data]
 bbrun = ["py.typed"]

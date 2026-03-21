@@ -1,8 +1,8 @@
 # bb-run
 
-[![PyPI version](https://badge.fury.io/py/bb-run.svg)](https://badge.fury.io/py/bb-run)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkarlhillx%2Fbb-run%2Fmain%2Fpyproject.toml&query=project.version&label=version)](https://github.com/karlhillx/bb-run/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Versions](https://img.shields.io/pypi/pyversions/bb-run.svg)](https://pypi.org/project/bb-run/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://github.com/karlhillx/bb-run/blob/main/pyproject.toml)
 [![Test](https://github.com/karlhillx/bb-run/actions/workflows/test.yml/badge.svg)](https://github.com/karlhillx/bb-run/actions/workflows/test.yml)
 
 **Run Bitbucket Pipelines locally.** bb-run faithfully executes your `bitbucket-pipelines.yml` on your local machine using Docker or directly on your host.
@@ -211,8 +211,18 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 Contributions welcome! Please open an issue or submit a PR.
 
+## Publishing to PyPI
+
+The package name **`bb-run`** must exist on PyPI (first upload is manual or via this workflow after [trusted publishing](https://docs.pypi.org/trusted-publishers/adding-a-publisher/) is configured).
+
+1. In PyPI, add a **pending publisher** for this GitHub repo and workflow `publish.yml`, environment **`pypi`**.
+2. In GitHub → **Settings → Environments**, create environment **`pypi`** (no secrets needed for trusted publishing).
+3. Bump `version` in `pyproject.toml`, merge, then **create a GitHub Release** (or run the workflow manually after a release).
+
+Badges in this README use **GitHub** (version from `pyproject.toml` on `main`) so they stay valid before the first PyPI release. After publishing, you can add e.g. `https://img.shields.io/pypi/v/bb-run.svg`.
+
 ## Links
 
-- [PyPI Package](https://pypi.org/project/bb-run/)
+- [PyPI project](https://pypi.org/project/bb-run/) (live after first successful upload)
 - [GitHub Repository](https://github.com/karlhillx/bb-run)
 - [Issue Tracker](https://github.com/karlhillx/bb-run/issues)
