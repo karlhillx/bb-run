@@ -23,11 +23,15 @@
 pip install bb-run
 ```
 
-### via Homebrew
+### via pipx (isolated CLI)
+
+If you prefer not to use a project virtualenv:
 
 ```bash
-brew install karlhillx/tap/bb-run
+pipx install bb-run
 ```
+
+Homebrew distribution would require a separate tap repository (e.g. `github.com/karlhillx/homebrew-tap` with a formula); that tap is not set up yet, so use **pip** or **pipx** above.
 
 ### from source
 
