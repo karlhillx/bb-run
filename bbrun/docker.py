@@ -40,15 +40,12 @@ class DockerRunner:
         return result.returncode == 0
     
     def _pull_image(self, image: str) -> bool:
-        """Pull a Docker image."""
+        """Pull a Docker image (streams docker pull progress to the terminal)."""
         print(f"Pulling Docker image: {image}")
-        result = subprocess.run(
-            ['docker', 'pull', image],
-            capture_output=True,
-            text=True
-        )
+        # Do not capture output: `docker pull` draws progress bars on stderr when connected to a TTY.
+        result = subprocess.run(['docker', 'pull', image])
         if result.returncode != 0:
-            print(f"Warning: Could not pull {image}: {result.stderr}")
+            print(f"Failed to pull image: {image}")
         return result.returncode == 0
     
     def _build_env(self, branch: str) -> Dict[str, str]:
