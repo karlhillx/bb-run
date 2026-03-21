@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# bb-run local artifact cache
+.bb-run/
+
 # Distribution / packaging
 .Python
 build/

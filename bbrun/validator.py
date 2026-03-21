@@ -4,7 +4,10 @@ Pipeline YAML Validator
 
 import yaml
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+
+from .artifacts import iter_upload_specs
+from .pipeline import parse_parallel_block
 
 
 class PipelineValidator:
@@ -76,10 +79,23 @@ class PipelineValidator:
                 for item in items:
                     self._show_step(item, indent=4)
     
-    def _show_step(self, item: Dict, indent: int = 2) -> None:
-        """Show details of a single step."""
-        step = item.get('step', item)
-        name = step.get('name', 'unnamed')
+    def _show_step(self, item: Any, indent: int = 2) -> None:
+        """Show details of a single step or parallel group."""
+        if not isinstance(item, dict):
+            return
+        if "parallel" in item:
+            raw, ff = parse_parallel_block(item["parallel"])
+            prefix = " " * indent
+            mode = "fail-fast" if ff else "no fail-fast"
+            print(f"{prefix}parallel ({len(raw)} steps, {mode}):")
+            for sub in raw:
+                self._show_step(sub, indent + 2)
+            return
+
+        step = item.get("step", item)
+        if not isinstance(step, dict):
+            return
+        name = step.get("name", "unnamed")
         prefix = " " * indent
         
         suffix = ""
@@ -89,7 +105,21 @@ class PipelineValidator:
             suffix += f" ({step['trigger']})"
         
         print(f"{prefix}• {name}{suffix}")
-        
+
+        raw_art = step.get("artifacts")
+        if isinstance(raw_art, dict) and "download" in raw_art:
+            print(f"{prefix}  → artifacts.download: {raw_art['download']}")
+        for spec in iter_upload_specs(step):
+            tag = spec.name or "paths"
+            print(
+                f"{prefix}  → artifact upload [{tag}] "
+                f"type={spec.type} capture-on={spec.capture_on}"
+            )
+            for p in spec.paths[:8]:
+                print(f"{prefix}     {p}")
+            if len(spec.paths) > 8:
+                print(f"{prefix}     … ({len(spec.paths)} patterns)")
+
         for cmd in step.get('script', []):
             if isinstance(cmd, str):
                 display = cmd[:70] + "..." if len(cmd) > 70 else cmd

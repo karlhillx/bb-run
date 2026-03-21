@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .artifacts import ArtifactSession
+from .pipeline import parse_parallel_block, run_parallel_group, unwrap_step_item
 from .validator import PipelineValidator
 
 
@@ -125,66 +127,110 @@ class DockerRunner:
         
         return env
     
+    def _docker_spawn_step(
+        self, step: Dict, default_image: str, env: Dict, label: str
+    ) -> Optional[subprocess.Popen]:
+        """Start a Docker-backed step; return Popen or None if nothing to run."""
+        image = step.get("image", default_image)
+        if not self._image_exists(image):
+            print(f"Image not found locally: {image}")
+            if not self._pull_image(image):
+                print(f"Failed to pull image {image}")
+                raise RuntimeError(f"docker pull failed: {image}")
+
+        docker_cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-w",
+            "/opt/atlassian/pipelines/agent/build",
+            "-v",
+            f"{self.repo_path}:/opt/atlassian/pipelines/agent/build:rw",
+        ]
+        for key, value in env.items():
+            docker_cmd.extend(["-e", f"{key}={value}"])
+        docker_cmd.append(image)
+
+        if "script" in step:
+            script = step["script"]
+            bash_cmd = (
+                " && ".join(script) if isinstance(script, list) else script
+            )
+            docker_cmd.extend(["/bin/bash", "-c", bash_cmd])
+            print(f"{label}Executing: {bash_cmd[:60]}...")
+            return subprocess.Popen(
+                docker_cmd,
+                cwd=self.repo_path,
+                env=env,
+            )
+        if "pipe" in step:
+            pipe = step["pipe"]
+            print(f"{label}Pipe: {pipe}")
+            print(f"{label}Note: Pipes are not executed in Docker mode (simplified)")
+            return None
+        print(f"{label}Warning: Step has no script or pipe")
+        return None
+
     def _run_step(self, step: Dict, step_name: str, default_image: str, env: Dict) -> bool:
         """Execute a single pipeline step in Docker."""
         print(f"\n{'='*60}")
         print(f"Step: {step_name}")
         print(f"{'='*60}")
-        
-        # Resolve image
-        image = step.get('image', default_image)
-        
-        # Check/pull image
-        if not self._image_exists(image):
-            print(f"Image not found locally: {image}")
-            if not self._pull_image(image):
-                print(f"Failed to pull image {image}")
-                return False
-        
-        # Build docker command
-        docker_cmd = [
-            'docker', 'run', '--rm',
-            '-w', '/opt/atlassian/pipelines/agent/build',
-            '-v', f'{self.repo_path}:/opt/atlassian/pipelines/agent/build:rw'
-        ]
-        
-        # Add environment variables
-        for key, value in env.items():
-            docker_cmd.extend(['-e', f'{key}={value}'])
-        
-        docker_cmd.append(image)
-        
-        # Handle script vs pipe
-        if 'script' in step:
-            script = step['script']
-            if isinstance(script, list):
-                bash_cmd = ' && '.join(script)
-            else:
-                bash_cmd = script
-            
-            docker_cmd.extend(['/bin/bash', '-c', bash_cmd])
-            print(f"Executing: {bash_cmd[:60]}...")
-        elif 'pipe' in step:
-            pipe = step['pipe']
-            print(f"Pipe: {pipe}")
-            print("Note: Pipes are not executed in Docker mode (simplified)")
-            return True
-        else:
-            print("Warning: Step has no script or pipe")
-            return True
-        
-        # Run
-        result = subprocess.run(
-            docker_cmd,
-            cwd=self.repo_path,
-            env=env
+        proc = self._docker_spawn_step(
+            step, default_image, env, label=""
         )
-        
-        if result.returncode != 0:
-            print(f"❌ Failed with exit code {result.returncode}")
+        if proc is None:
+            return True
+        result = proc.wait()
+        if result != 0:
+            print(f"❌ Failed with exit code {result}")
             return False
-        
         return True
+
+    def _run_parallel(
+        self,
+        parallel_block,
+        default_image: str,
+        env: Dict,
+        artifacts: ArtifactSession,
+    ) -> bool:
+        raw, group_ff = parse_parallel_block(parallel_block)
+        n = len(raw)
+        if n == 0:
+            print("Warning: empty parallel group")
+            return True
+
+        artifacts.prepare_for_step({})
+
+        ff_note = "fail-fast: on" if group_ff else "fail-fast: off"
+        print(f"\n{'='*60}")
+        print(f"Parallel group ({n} steps, {ff_note})")
+        print(f"{'='*60}")
+        for j, item in enumerate(raw):
+            st = unwrap_step_item(item)
+            nm = st.get("name", f"step {j + 1}") if isinstance(st, dict) else j
+            print(f"  • {nm}")
+
+        def spawn(i: int, step: Dict) -> Optional[subprocess.Popen]:
+            child_env = dict(env)
+            child_env["BITBUCKET_PARALLEL_STEP"] = str(i)
+            child_env["BITBUCKET_PARALLEL_STEP_COUNT"] = str(n)
+            name = step.get("name", f"step {i + 1}") if isinstance(step, dict) else i
+            label = f"[parallel {i + 1}/{n} | {name}] "
+            return self._docker_spawn_step(
+                step, default_image, child_env, label=label
+            )
+
+        ok, each_ok = run_parallel_group(
+            raw, group_fail_fast=group_ff, spawn=spawn
+        )
+        for i, item in enumerate(raw):
+            st = unwrap_step_item(item)
+            if isinstance(st, dict) and i < len(each_ok):
+                artifacts.capture_after_step(st, each_ok[i])
+        if not ok:
+            print("❌ Parallel group failed")
+        return ok
     
     def run(
         self,
@@ -225,13 +271,25 @@ class DockerRunner:
         
         # Run steps
         env = self._build_env(branch)
+        artifacts = ArtifactSession(self.repo_path)
         all_passed = True
-        
+
         for i, item in enumerate(steps):
-            step = item.get('step', item)
-            step_name = step.get('name', f'Step {i+1}')
-            
-            if not self._run_step(step, step_name, default_image, env):
+            if isinstance(item, dict) and "parallel" in item:
+                if not self._run_parallel(
+                    item["parallel"], default_image, env, artifacts
+                ):
+                    all_passed = False
+                    break
+                continue
+
+            step = item.get("step", item)
+            step_name = step.get("name", f"Step {i + 1}")
+
+            artifacts.prepare_for_step(step)
+            step_ok = self._run_step(step, step_name, default_image, env)
+            artifacts.capture_after_step(step, step_ok)
+            if not step_ok:
                 all_passed = False
                 break
         

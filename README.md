@@ -12,8 +12,9 @@
 - **Test before pushing** - Catch CI failures locally before committing
 - **Fast iteration** - No waiting for Bitbucket's pipeline queue
 - **Debug easily** - Run in verbose mode, inspect outputs directly
-- **Two modes** - Docker for Bitbucket-accurate execution, Host for quick local testing
-- **No dependencies** - Works with just Python and Docker (optional)
+- **Two modes** - Docker for Bitbucket-accurate execution; host mode runs on your machine with **no Docker**
+- **Parallel steps** - `parallel:` groups run **concurrently** in both modes; group `fail-fast: true` and per-step `fail-fast` behave like Bitbucket (siblings are **terminated** after a failing step when fail-fast applies)
+- **Lightweight** - Install needs **Python 3.12+** and **PyYAML**; **Docker** is only required for `--mode docker` (default)
 
 ## Installation
 
@@ -109,6 +110,40 @@ bb-run --mode host
 
 **Pros:** Fast, no image downloads  
 **Cons:** May differ from Bitbucket's environment (Python vs Python3, etc.)
+
+## Parallel steps
+
+Bitbucket-style `parallel` blocks are supported in **Docker** and **host** mode. Child steps run at the same time. While a parallel group runs, each container / shell receives **`BITBUCKET_PARALLEL_STEP`** (0-based index) and **`BITBUCKET_PARALLEL_STEP_COUNT`**, matching [Bitbucket’s parallel variables](https://support.atlassian.com/bitbucket-cloud/docs/parallel-step-options/#Default-variables-for-parallel-steps).
+
+```yaml
+pipelines:
+  default:
+    - parallel:
+        fail-fast: true
+        steps:
+          - step:
+              name: Integration A
+              script:
+                - ./integration.sh --batch 1
+          - step:
+              name: Integration B
+              script:
+                - ./integration.sh --batch 2
+```
+
+You can set **`fail-fast: false`** on an individual step inside the group so its failure does not stop the others (when the group uses fail-fast).
+
+## Artifacts
+
+bb-run models [Bitbucket pipeline artifacts](https://support.atlassian.com/bitbucket-cloud/docs/use-artifacts-in-steps/) so later steps can rely on captured files even if you delete them mid-pipeline:
+
+- **List form** — `artifacts: [dist/**, reports/*.txt]`
+- **Object form** — `artifacts: { paths: [...], download: false }` plus optional **`upload:`** entries with **`name`**, **`type`** (`shared` / `scoped` / `test-reports`), **`paths`**, **`ignore-paths`**, and **`capture-on`** (`success` / `failed` / `always`)
+- **`download`** — default is to restore all prior **shared** layers before a step; **`download: false`** skips that restore; a **list of names** restores only those shared artifacts (plus unnamed list-style captures as a fallback when nothing matches)
+
+Captured trees are stored under **`.bb-run/artifacts/`** in the repo (ignored by git). **Shared** layers are replayed onto the clone directory before each step that downloads them. **Scoped** and **test-reports** uploads are saved for inspection but are **not** injected into later steps.
+
+**Caveats:** With **`--mode host`** or a bind-mounted Docker workspace, files left on disk by an earlier step are still visible even when **`download: false`**; bb-run only controls replay from its cache, not deleting your working tree. Parallel groups capture each child **after** the whole group finishes, reading the final workspace (Bitbucket isolates children more strictly).
 
 ## Examples
 

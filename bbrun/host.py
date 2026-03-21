@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .artifacts import ArtifactSession
+from .pipeline import parse_parallel_block, run_parallel_group, unwrap_step_item
 from .validator import PipelineValidator
 
 
@@ -66,50 +68,84 @@ class HostRunner:
         
         return cmd
     
+    def _host_spawn_step(
+        self, step: Dict, env: Dict, label: str
+    ) -> Optional[subprocess.Popen]:
+        """Start a host shell step; return Popen or None if nothing to run."""
+        if "script" in step:
+            script = step["script"]
+            commands = script if isinstance(script, list) else [script]
+            parts = [self._translate_command(c) for c in commands]
+            full = " && ".join(parts)
+            print(f"{label}$ {full[:200]}{'...' if len(full) > 200 else ''}")
+            return subprocess.Popen(
+                full,
+                shell=True,
+                cwd=self.repo_path,
+                env=env,
+            )
+        if "pipe" in step:
+            pipe = step.get("pipe", "")
+            print(f"{label}⚠️  Pipe: {pipe}")
+            print(f"{label}    (pipes not executed in host mode)")
+            return None
+        print(f"{label}Warning: Step has no script or pipe")
+        return None
+
     def _run_step(self, step: Dict, step_name: str, env: Dict) -> bool:
         """Execute a single pipeline step on the host."""
         print(f"\n{'='*60}")
         print(f"Step: {step_name}")
         print(f"{'='*60}")
-        
-        if 'script' in step:
-            return self._run_script(step['script'], env)
-        elif 'pipe' in step:
-            return self._run_pipe(step)
-        else:
-            print("Warning: Step has no script or pipe")
+
+        proc = self._host_spawn_step(step, env, label="")
+        if proc is None:
             return True
-    
-    def _run_script(self, script: List[str], env: Dict) -> bool:
-        """Run a script step."""
-        if isinstance(script, list):
-            commands = script
-        else:
-            commands = [script]
-        
-        for cmd in commands:
-            translated = self._translate_command(cmd)
-            print(f"$ {translated}")
-            
-            result = subprocess.run(
-                translated,
-                shell=True,
-                cwd=self.repo_path,
-                env=env
-            )
-            
-            if result.returncode != 0:
-                print(f"❌ Failed with exit code {result.returncode}")
-                return False
-        
+        rc = proc.wait()
+        if rc != 0:
+            print(f"❌ Failed with exit code {rc}")
+            return False
         return True
-    
-    def _run_pipe(self, step: Dict) -> bool:
-        """Handle a pipe step (not executed in host mode)."""
-        pipe = step.get('pipe', '')
-        print(f"⚠️  Pipe: {pipe}")
-        print("    (pipes not executed in host mode)")
-        return True
+
+    def _run_parallel(
+        self, parallel_block, env: Dict, artifacts: ArtifactSession
+    ) -> bool:
+        raw, group_ff = parse_parallel_block(parallel_block)
+        n = len(raw)
+        if n == 0:
+            print("Warning: empty parallel group")
+            return True
+
+        # Same prior shared artifacts for every parallel child (Bitbucket injects downloads per step).
+        artifacts.prepare_for_step({})
+
+        ff_note = "fail-fast: on" if group_ff else "fail-fast: off"
+        print(f"\n{'='*60}")
+        print(f"Parallel group ({n} steps, {ff_note})")
+        print(f"{'='*60}")
+        for j, item in enumerate(raw):
+            st = unwrap_step_item(item)
+            nm = st.get("name", f"step {j + 1}") if isinstance(st, dict) else j
+            print(f"  • {nm}")
+
+        def spawn(i: int, step: Dict) -> Optional[subprocess.Popen]:
+            child_env = dict(env)
+            child_env["BITBUCKET_PARALLEL_STEP"] = str(i)
+            child_env["BITBUCKET_PARALLEL_STEP_COUNT"] = str(n)
+            name = step.get("name", f"step {i + 1}") if isinstance(step, dict) else i
+            label = f"[parallel {i + 1}/{n} | {name}] "
+            return self._host_spawn_step(step, child_env, label=label)
+
+        ok, each_ok = run_parallel_group(
+            raw, group_fail_fast=group_ff, spawn=spawn
+        )
+        for i, item in enumerate(raw):
+            st = unwrap_step_item(item)
+            if isinstance(st, dict) and i < len(each_ok):
+                artifacts.capture_after_step(st, each_ok[i])
+        if not ok:
+            print("❌ Parallel group failed")
+        return ok
     
     def run(
         self,
@@ -144,13 +180,23 @@ class HostRunner:
         
         # Run steps
         env = self._build_env(branch)
+        artifacts = ArtifactSession(self.repo_path)
         all_passed = True
-        
+
         for i, item in enumerate(steps):
-            step = item.get('step', item)
-            step_name = step.get('name', f'Step {i+1}')
-            
-            if not self._run_step(step, step_name, env):
+            if isinstance(item, dict) and "parallel" in item:
+                if not self._run_parallel(item["parallel"], env, artifacts):
+                    all_passed = False
+                    break
+                continue
+
+            step = item.get("step", item)
+            step_name = step.get("name", f"Step {i + 1}")
+
+            artifacts.prepare_for_step(step)
+            step_ok = self._run_step(step, step_name, env)
+            artifacts.capture_after_step(step, step_ok)
+            if not step_ok:
                 all_passed = False
                 break
         
