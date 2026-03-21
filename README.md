@@ -19,6 +19,8 @@
 
 ### via pip
 
+Install from **[PyPI](https://pypi.org/project/bb-run/)**:
+
 ```bash
 pip install bb-run
 ```
