@@ -4,7 +4,6 @@ Tests for HostRunner
 
 import pytest
 import yaml
-from pathlib import Path
 from bbrun.host import HostRunner
 
 

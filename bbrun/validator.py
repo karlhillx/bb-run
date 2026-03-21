@@ -4,7 +4,7 @@ Pipeline YAML Validator
 
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 
 class PipelineValidator:
@@ -54,14 +54,14 @@ class PipelineValidator:
         
         # Default pipeline
         if 'default' in pipelines:
-            print(f"\n📦 default:")
+            print("\n📦 default:")
             for item in pipelines['default']:
                 self._show_step(item)
         
         # Branches
         branches = pipelines.get('branches', {})
         if branches:
-            print(f"\n🌿 branches:")
+            print("\n🌿 branches:")
             for branch, items in branches.items():
                 print(f"   {branch}:")
                 for item in items:
@@ -70,7 +70,7 @@ class PipelineValidator:
         # Tags
         tags = pipelines.get('tags', {})
         if tags:
-            print(f"\n🏷️  tags:")
+            print("\n🏷️  tags:")
             for tag, items in tags.items():
                 print(f"   {tag}:")
                 for item in items:

@@ -3,7 +3,6 @@ Host Runner - Executes pipeline steps directly on the host machine
 """
 
 import os
-import sys
 import shutil
 import subprocess
 from pathlib import Path
@@ -109,7 +108,7 @@ class HostRunner:
         """Handle a pipe step (not executed in host mode)."""
         pipe = step.get('pipe', '')
         print(f"⚠️  Pipe: {pipe}")
-        print(f"    (pipes not executed in host mode)")
+        print("    (pipes not executed in host mode)")
         return True
     
     def run(
@@ -134,7 +133,7 @@ class HostRunner:
         print(f"Repository: {self.repo_path}")
         print(f"Target: {target}")
         print(f"Branch: {branch}")
-        print(f"Mode: HOST (runs on your machine)")
+        print("Mode: HOST (runs on your machine)")
         print(f"Note: Uses '{image}' as reference for command mapping")
         
         # Get steps

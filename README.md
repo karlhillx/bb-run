@@ -138,9 +138,25 @@ bb-run --repo /path/to/repo
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - PyYAML
 - Docker (for Docker mode)
+
+### Local development (virtualenv)
+
+Use Python 3.12 for the project venv so `python --version` matches `requires-python` in `pyproject.toml`:
+
+```bash
+# macOS (Homebrew)
+brew install python@3.12
+"$(brew --prefix python@3.12)/bin/python3.12" -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+# or tests + coverage only: pip install -e ".[test]"
+python -m pytest
+python -m pytest --cov=bbrun --cov-report=xml tests/
+ruff check bbrun
+```
 
 ## Environment Variables
 
@@ -169,6 +185,16 @@ bb-run --mode host
 ### "pip: command not found"
 
 bb-run automatically translates `pip` to `pip3` and adds `--break-system-packages` for PEP 668 environments.
+
+### `pytest: error: unrecognized arguments: --cov=...`
+
+Coverage flags come from the **pytest-cov** plugin. Install the `test` or `dev` extra, then use the same interpreter for pytest:
+
+```bash
+pip install -e ".[dev]"
+# or: pip install -e ".[test]"
+python -m pytest --cov=bbrun --cov-report=xml tests/
+```
 
 ### Image pull failures
 

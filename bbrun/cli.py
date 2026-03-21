@@ -3,11 +3,9 @@
 bb-run CLI - Bitbucket Pipelines Local Runner
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path
-from typing import Optional
 
 from .validator import PipelineValidator
 from .docker import DockerRunner

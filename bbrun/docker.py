@@ -3,7 +3,6 @@ Docker Runner - Executes pipeline steps in Docker containers
 """
 
 import os
-import sys
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -172,7 +171,7 @@ class DockerRunner:
         print(f"Repository: {self.repo_path}")
         print(f"Target: {target}")
         print(f"Branch: {branch}")
-        print(f"Mode: DOCKER")
+        print("Mode: DOCKER")
         print(f"Image: {default_image}")
         
         # Get steps

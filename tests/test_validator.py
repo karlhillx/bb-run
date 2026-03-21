@@ -4,7 +4,6 @@ Tests for PipelineValidator
 
 import pytest
 import yaml
-from pathlib import Path
 from bbrun.validator import PipelineValidator
 
 
