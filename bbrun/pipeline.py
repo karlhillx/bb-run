@@ -1,6 +1,4 @@
-"""
-Shared pipeline parsing and parallel step execution (stdlib only).
-"""
+"""Shared pipeline parsing and parallel step execution."""
 
 from __future__ import annotations
 
@@ -9,12 +7,31 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .errors import explain_process_launch_error
+
 
 def unwrap_step_item(item: Any) -> Dict:
     """Normalize a pipeline list entry to the inner step dict."""
     if isinstance(item, dict):
         return item.get("step", item)
     return {}
+
+
+def parallel_failure_summaries(raw_items: List[Any], each_ok: List[bool]) -> List[str]:
+    """Human-readable labels for failed parallel children (for logging)."""
+    lines: List[str] = []
+    for i, succeeded in enumerate(each_ok):
+        if succeeded:
+            continue
+        item = raw_items[i] if i < len(raw_items) else None
+        st = unwrap_step_item(item)
+        nm = (
+            st.get("name", f"step {i + 1}")
+            if isinstance(st, dict)
+            else f"step {i + 1}"
+        )
+        lines.append(f"{nm} (parallel index {i})")
+    return lines
 
 
 def parse_parallel_block(parallel_val: Any) -> Tuple[List[Any], bool]:
@@ -92,8 +109,17 @@ def run_parallel_group(
         proc: Optional[subprocess.Popen]
         try:
             proc = spawn(i, step)
-        except Exception:
+        except Exception as e:
             results[i] = False
+            label = (
+                step.get("name", f"step {i + 1}")
+                if isinstance(step, dict)
+                else f"step {i + 1}"
+            )
+            print(
+                f"❌ Could not start parallel step {label!r}: "
+                f"{explain_process_launch_error(e)}"
+            )
             if abort_siblings_on_step_failure(step, group_fail_fast):
                 terminate_others(-1)
             return

@@ -106,6 +106,7 @@ Examples:
   bb-run -v KEY=VALUE                      # Pass variables
   bb-run --list-targets                    # List available targets
   bb-run --validate                        # Validate YAML only
+  python3 -m bbrun --version               # If bb-run is not on PATH
         """
     )
     

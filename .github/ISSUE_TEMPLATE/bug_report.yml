@@ -1,0 +1,66 @@
+name: Bug report
+description: Report incorrect behavior or a crash in bb-run
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. The more detail you provide, the faster we can reproduce it.
+
+  - type: input
+    id: version
+    attributes:
+      label: bb-run version
+      description: Output of `bb-run --version` or `python3 -m bbrun --version`
+      placeholder: e.g. 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python3 --version`
+      placeholder: e.g. Python 3.12.8
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How were you running bb-run?
+      options:
+        - docker (default)
+        - host
+        - validate / list-targets only (no full run)
+    validations:
+      required: true
+
+  - type: input
+    id: docker
+    attributes:
+      label: Docker version (if using docker mode)
+      description: Output of `docker --version`, or “n/a”
+      placeholder: e.g. Docker version 27.x
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What you expected vs what you saw; paste full terminal output if helpful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: pipeline
+    attributes:
+      label: Minimal bitbucket-pipelines.yml (or the failing step)
+      description: Redact secrets. A small snippet is enough if the full file is huge.
+      render: yaml

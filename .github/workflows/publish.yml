@@ -1,4 +1,5 @@
 # Upload wheels/sdists to PyPI when you publish a GitHub Release.
+# Maintainer checklist: RELEASING.md in the repo root.
 # One-time setup: https://docs.pypi.org/trusted-publishers/adding-a-publisher/
 # (PyPI → Your project → Publishing → Add a new pending publisher → GitHub)
 

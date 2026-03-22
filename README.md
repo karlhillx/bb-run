@@ -33,7 +33,22 @@ If you prefer not to use a project virtualenv:
 pipx install bb-run
 ```
 
-There is no Homebrew tap yet; use **pip** or **pipx** for installs.
+**Recommended for most CLI users:** **pipx** keeps bb-run out of system Python and usually puts `bb-run` on your `PATH` without extra setup.
+
+### If `bb-run` is not on your `PATH`
+
+After `pip install --user` or some IDE setups, the script directory may be missing from `PATH`. Run the same CLI via Python:
+
+```bash
+python3 -m bbrun --version
+python3 -m bbrun --validate
+```
+
+### Homebrew
+
+There is **no official Homebrew formula** in this repository yet. Use **pip** or **pipx** above for the supported install path.
+
+To package for Homebrew later: submit a formula to [homebrew-core](https://github.com/Homebrew/homebrew-core) (tagged releases + tests that do not require Docker are typical expectations), or maintain a **third-party tap** and document it in your fork; see [Homebrew docs](https://docs.brew.sh/).
 
 ### from source
 
@@ -280,7 +295,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Contributing
 
-Contributions welcome! Please open an issue or submit a PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md). User-facing changes should be noted in [CHANGELOG.md](CHANGELOG.md). Security reports: [SECURITY.md](SECURITY.md).
 
 ## Links
 

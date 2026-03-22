@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .artifacts import ArtifactSession
-from .pipeline import parse_parallel_block, run_parallel_group, unwrap_step_item
+from .errors import explain_process_launch_error, report_step_script_failure
+from .pipeline import (
+    parallel_failure_summaries,
+    parse_parallel_block,
+    run_parallel_group,
+    unwrap_step_item,
+)
 from .validator import PipelineValidator
 
 
@@ -176,14 +182,19 @@ class DockerRunner:
         print(f"\n{'='*60}")
         print(f"Step: {step_name}")
         print(f"{'='*60}")
-        proc = self._docker_spawn_step(
-            step, default_image, env, label=""
-        )
+        try:
+            proc = self._docker_spawn_step(step, default_image, env, label="")
+        except RuntimeError as e:
+            print(f"❌ {e}")
+            return False
+        except OSError as e:
+            print(f"❌ {explain_process_launch_error(e)}")
+            return False
         if proc is None:
             return True
         result = proc.wait()
         if result != 0:
-            print(f"❌ Failed with exit code {result}")
+            report_step_script_failure(step_name, result, docker=True)
             return False
         return True
 
@@ -230,6 +241,8 @@ class DockerRunner:
                 artifacts.capture_after_step(st, each_ok[i])
         if not ok:
             print("❌ Parallel group failed")
+            for line in parallel_failure_summaries(raw, each_ok):
+                print(f"   • {line}")
         return ok
     
     def run(

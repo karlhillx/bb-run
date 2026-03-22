@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .artifacts import ArtifactSession
-from .pipeline import parse_parallel_block, run_parallel_group, unwrap_step_item
+from .errors import explain_process_launch_error, report_step_script_failure
+from .pipeline import (
+    parallel_failure_summaries,
+    parse_parallel_block,
+    run_parallel_group,
+    unwrap_step_item,
+)
 from .validator import PipelineValidator
 
 
@@ -98,12 +104,16 @@ class HostRunner:
         print(f"Step: {step_name}")
         print(f"{'='*60}")
 
-        proc = self._host_spawn_step(step, env, label="")
+        try:
+            proc = self._host_spawn_step(step, env, label="")
+        except OSError as e:
+            print(f"❌ {explain_process_launch_error(e)}")
+            return False
         if proc is None:
             return True
         rc = proc.wait()
         if rc != 0:
-            print(f"❌ Failed with exit code {rc}")
+            report_step_script_failure(step_name, rc, docker=False)
             return False
         return True
 
@@ -145,6 +155,8 @@ class HostRunner:
                 artifacts.capture_after_step(st, each_ok[i])
         if not ok:
             print("❌ Parallel group failed")
+            for line in parallel_failure_summaries(raw, each_ok):
+                print(f"   • {line}")
         return ok
     
     def run(
