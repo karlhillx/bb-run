@@ -22,27 +22,48 @@ class PipelineValidator:
         """Load and parse the pipeline YAML."""
         if not self.pipeline_file.exists():
             return None
-        
+
         try:
-            with open(self.pipeline_file, 'r') as f:
-                self._config = yaml.safe_load(f)
-            return self._config
+            with open(self.pipeline_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
         except yaml.YAMLError as e:
             print(f"YAML parse error: {e}")
             return None
+        except OSError as e:
+            print(f"Error reading {self.pipeline_file}: {e}")
+            return None
+
+        if data is None:
+            print("Error: Pipeline file is empty")
+            return None
+        if not isinstance(data, dict):
+            print(
+                "Error: Pipeline file must start with a YAML mapping "
+                "(object), not a list or plain value."
+            )
+            return None
+
+        self._config = data
+        return self._config
     
     def validate(self) -> bool:
         """Validate the pipeline configuration."""
+        if not self.pipeline_file.exists():
+            print(
+                f"Error: {self.pipeline_file.name} not found in "
+                f"{self.repo_path.resolve()}"
+            )
+            return False
+
         config = self.load()
-        
+
         if not config:
             return False
-        
-        # Check for required 'pipelines' key
-        if 'pipelines' not in config:
+
+        if "pipelines" not in config:
             print("Error: Missing 'pipelines' key")
             return False
-        
+
         return True
     
     def show_summary(self) -> None:

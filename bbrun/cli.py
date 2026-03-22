@@ -15,12 +15,22 @@ from .validator import PipelineValidator
 
 def list_targets(repo_path: Path) -> int:
     """List available pipeline targets."""
+    pipeline_file = repo_path / "bitbucket-pipelines.yml"
+    if not pipeline_file.exists():
+        print(f"Error: bitbucket-pipelines.yml not found in {repo_path}")
+        return 1
+
     validator = PipelineValidator(repo_path)
     config = validator.load()
-    
+
     if not config:
+        print("Error: Could not read or parse bitbucket-pipelines.yml")
         return 1
-    
+
+    if "pipelines" not in config:
+        print("Error: Missing 'pipelines' key in bitbucket-pipelines.yml")
+        return 1
+
     print("Available pipeline targets:")
     print("\n  default")
     
@@ -72,17 +82,15 @@ def run_pipeline(
 def validate(repo_path: Path) -> int:
     """Validate a pipeline YAML file."""
     validator = PipelineValidator(repo_path)
-    
+
     if validator.validate():
         print("✅ Valid bitbucket-pipelines.yml")
         validator.show_summary()
         return 0
-    else:
-        print("❌ Invalid or missing bitbucket-pipelines.yml")
-        return 1
+    return 1
 
 
-def main():
+def _cli_dispatch() -> int:
     parser = argparse.ArgumentParser(
         prog='bb-run',
         description='Run Bitbucket Pipelines locally',
@@ -90,7 +98,7 @@ def main():
         epilog="""
 Examples:
   bb-run                                    # Run default pipeline
-  bb-run --target master                   # Run master branch pipeline
+  bb-run --target branches.main            # Run main branch pipeline
   bb-run --repo /path/to/repo              # Run in specific repo
   bb-run --branch feature-x                # Simulate running on a branch
   bb-run --mode host                       # Run on host (no Docker)
@@ -140,7 +148,7 @@ Examples:
     parser.add_argument(
         '--verbose',
         action='store_true',
-        help='Verbose output'
+        help='Print variables from -v/--variables before the run',
     )
     parser.add_argument(
         "--version",
@@ -149,39 +157,58 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Parse variables
+
+    try:
+        repo_path = Path(args.repo).expanduser().resolve(strict=False)
+    except OSError as e:
+        print(f"Error: Could not resolve path {args.repo!r}: {e}", file=sys.stderr)
+        return 1
+
+    if not repo_path.is_dir():
+        print(f"Error: Not a directory: {repo_path}", file=sys.stderr)
+        return 1
+
     variables = {}
     if args.variables:
         for var in args.variables:
-            if '=' in var:
-                key, value = var.split('=', 1)
-                variables[key] = value
-    
-    repo_path = Path(args.repo).resolve()
-    
-    # Validate repo has a pipeline file
-    pipeline_file = repo_path / 'bitbucket-pipelines.yml'
-    if not pipeline_file.exists() and not args.list_targets:
-        print(f"Error: bitbucket-pipelines.yml not found in {repo_path}")
-        return 1
-    
-    # Execute
+            if "=" not in var:
+                print(
+                    f"Warning: ignoring -v {var!r} (use KEY=value)",
+                    file=sys.stderr,
+                )
+                continue
+            key, value = var.split("=", 1)
+            variables[key] = value
+
     if args.list_targets:
         return list_targets(repo_path)
-    
+
     if args.validate:
         return validate(repo_path)
-    
+
+    pipeline_file = repo_path / "bitbucket-pipelines.yml"
+    if not pipeline_file.exists():
+        print(f"Error: bitbucket-pipelines.yml not found in {repo_path}")
+        print("Tip: run from your repository root, or pass --repo /path/to/repo")
+        return 1
+
     return run_pipeline(
         repo_path=repo_path,
         target=args.target,
         branch=args.branch,
         variables=variables,
         mode=args.mode,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+def main() -> int:
+    try:
+        return _cli_dispatch()
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

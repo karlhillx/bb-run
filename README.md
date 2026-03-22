@@ -49,11 +49,20 @@ To run tests or Ruff locally, use the **dev** extra (includes pytest, pytest-cov
 pip install -e ".[dev]"
 ```
 
+## Using bb-run reliably
+
+- Run commands from the **repository root** (the directory that contains `bitbucket-pipelines.yml`), or pass **`--repo /path/to/that/root`**.
+- Prefer **`bb-run --validate`** first; it checks the file without Docker. If you do not have Docker, use **`--mode host`** for runs (see [Modes](#modes)).
+- On macOS/Linux where `pip install` is restricted (PEP 668), use a venv, **`pipx`**, or:  
+  `python3 -m pip install --user bb-run`  
+  (then ensure that user script directory is on your `PATH`).
+
 ## Quick Start
 
 ### Validate a pipeline (instant)
 
 ```bash
+cd /path/to/your/repo   # where bitbucket-pipelines.yml lives
 bb-run --validate
 ```
 
@@ -174,6 +183,8 @@ bb-run --target branches.main
 bb-run --verbose
 ```
 
+`--verbose` currently prints **`-v` / `--variables`** values before the run; more detail may be added later.
+
 ## Configuration
 
 bb-run automatically looks for `bitbucket-pipelines.yml` in your current directory. Use `--repo` to specify a different path:
@@ -221,6 +232,18 @@ bb-run sets these Bitbucket-specific environment variables:
 | `BITBUCKET_PARALLEL_STEP_COUNT` | Number of steps in that parallel group (parallel steps only) |
 
 ## Troubleshooting
+
+### "bitbucket-pipelines.yml not found"
+
+You are not in the repo root, or the file name does not match exactly. **`cd`** into the project that contains the YAML, or use **`--repo`**.
+
+### "No steps found for target"
+
+The **`--target`** name does not match your file. List names with:
+
+```bash
+bb-run --list-targets
+```
 
 ### "Docker is not available"
 

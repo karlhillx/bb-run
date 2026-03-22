@@ -242,7 +242,10 @@ class DockerRunner:
         """Run the pipeline for a given target."""
         if variables:
             self.variables.update(variables)
-        
+
+        if verbose and self.variables:
+            print(f"(verbose) Extra variables: {self.variables}")
+
         # Check Docker
         if not self._docker_available():
             print("Error: Docker is not available")
@@ -267,6 +270,7 @@ class DockerRunner:
         steps = self._get_steps(config, target)
         if not steps:
             print(f"No steps found for target: {target}")
+            print("Hint: bb-run --list-targets")
             return False
         
         # Run steps

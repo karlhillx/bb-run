@@ -62,6 +62,28 @@ def test_validator_validate_success(temp_repo, sample_pipeline):
     assert validator.validate() is True
 
 
+def test_validator_validate_missing_file(temp_repo):
+    """Validation fails when the pipeline file is absent."""
+    validator = PipelineValidator(temp_repo)
+    assert validator.validate() is False
+
+
+def test_validator_empty_file(temp_repo):
+    """Empty YAML file is rejected."""
+    pipeline_file = temp_repo / "bitbucket-pipelines.yml"
+    pipeline_file.write_text("", encoding="utf-8")
+    validator = PipelineValidator(temp_repo)
+    assert validator.load() is None
+
+
+def test_validator_list_root_not_mapping(temp_repo):
+    """Root YAML must be a mapping, not a list."""
+    pipeline_file = temp_repo / "bitbucket-pipelines.yml"
+    pipeline_file.write_text("- item\n", encoding="utf-8")
+    validator = PipelineValidator(temp_repo)
+    assert validator.load() is None
+
+
 def test_validator_validate_missing_pipelines_key(temp_repo):
     """Test validation fails when pipelines key is missing."""
     invalid_config = {'image': 'python:3.11'}

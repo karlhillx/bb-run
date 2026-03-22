@@ -157,7 +157,10 @@ class HostRunner:
         """Run the pipeline for a given target."""
         if variables:
             self.variables.update(variables)
-        
+
+        if verbose and self.variables:
+            print(f"(verbose) Extra variables: {self.variables}")
+
         # Load pipeline
         config = self.validator.load()
         if not config:
@@ -176,6 +179,7 @@ class HostRunner:
         steps = self._get_steps(config, target)
         if not steps:
             print(f"No steps found for target: {target}")
+            print("Hint: bb-run --list-targets")
             return False
         
         # Run steps
