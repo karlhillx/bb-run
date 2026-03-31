@@ -72,6 +72,7 @@ def run_parallel_group(
     group_fail_fast: bool,
     spawn: Callable[[int, Dict], Optional[subprocess.Popen]],
     wait: Callable[[subprocess.Popen], int] = lambda p: p.wait(),
+    terminate: Callable[[subprocess.Popen], None] = lambda p: p.terminate(),
 ) -> Tuple[bool, List[bool]]:
     """
     Run unwrapped parallel child steps concurrently.
@@ -96,7 +97,7 @@ def run_parallel_group(
                 if j == except_index or proc is None:
                     continue
                 try:
-                    proc.terminate()
+                    terminate(proc)
                 except (ProcessLookupError, OSError):
                     pass
 
