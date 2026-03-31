@@ -46,9 +46,6 @@ license-files = ["LICENSE"]
 where = ["."]
 include = ["bbrun*"]
 
-[tool.setuptools.package-data]
-bbrun = ["py.typed"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

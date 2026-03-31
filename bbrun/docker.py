@@ -335,6 +335,14 @@ class DockerRunner:
         if target.startswith('tags.'):
             tag_name = target.split('.', 1)[1]
             return pipelines.get('tags', {}).get(tag_name, [])
+
+        if target.startswith('custom.'):
+            custom_name = target.split('.', 1)[1]
+            return pipelines.get('custom', {}).get(custom_name, [])
+
+        if target.startswith('pull-requests.'):
+            pr_name = target.split('.', 1)[1]
+            return pipelines.get('pull-requests', {}).get(pr_name, [])
         
         if target in pipelines:
             return pipelines[target]

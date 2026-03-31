@@ -118,6 +118,22 @@ bb-run -v ENVIRONMENT=staging -v API_KEY=secret
 bb-run --list-targets
 ```
 
+### List targets as JSON
+
+```bash
+bb-run --list-targets --json
+```
+
+## Target Syntax
+
+bb-run uses the same target naming as Bitbucket Pipelines:
+
+- `default`
+- `branches.<branch-name>`
+- `tags.<tag-name>`
+- `custom.<name>` for pipelines under `pipelines: custom:`
+- `pull-requests.<pattern>` for pipelines under `pipelines: pull-requests:`
+
 ## Modes
 
 ### Docker Mode (default)
@@ -207,6 +223,22 @@ bb-run automatically looks for `bitbucket-pipelines.yml` in your current directo
 ```bash
 bb-run --repo /path/to/repo
 ```
+
+## Supported vs Unsupported Bitbucket Features
+
+**Supported (today):**
+
+- `default`, `branches.<name>`, `tags.<name>`, `custom.<name>`, and `pull-requests.<pattern>` targets
+- Step `script` execution (sequential)
+- Basic environment variables (Bitbucket-style values)
+- Docker images per step (Docker mode)
+
+**Not yet supported / simplified:**
+
+- Pipes (listed but not executed)
+- Parallel steps or step conditions
+- Services, caches, and artifacts
+- Deployment environments, manual triggers, or step size
 
 ## Requirements
 
