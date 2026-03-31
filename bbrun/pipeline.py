@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait, FIRST_COMPLETED
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .errors import explain_process_launch_error
@@ -77,7 +78,7 @@ def run_parallel_group(
     """
     Run unwrapped parallel child steps concurrently.
 
-    spawn(index, step_dict, env) returns Popen or None (skip / no process).
+    spawn(index, step_dict) returns Popen or None (skip / no process).
     On fail-fast, other running processes are terminated.
 
     Returns (all_succeeded, per_index_success).
@@ -90,6 +91,7 @@ def run_parallel_group(
     active: List[Optional[subprocess.Popen]] = [None] * n
     lock = threading.Lock()
     results: List[bool] = [True] * n
+    fail_fast_triggered = threading.Event()
 
     def terminate_others(except_index: int) -> None:
         with lock:
@@ -122,6 +124,7 @@ def run_parallel_group(
                 f"{explain_process_launch_error(e)}"
             )
             if abort_siblings_on_step_failure(step, group_fail_fast):
+                fail_fast_triggered.set()
                 terminate_others(-1)
             return
 
@@ -138,14 +141,32 @@ def run_parallel_group(
                 active[i] = None
 
         results[i] = rc == 0
-        if not results[i] and abort_siblings_on_step_failure(
-            step, group_fail_fast
-        ):
+        if not results[i] and abort_siblings_on_step_failure(step, group_fail_fast):
+            fail_fast_triggered.set()
             terminate_others(i)
 
-    with ThreadPoolExecutor(max_workers=min(32, max(1, n))) as pool:
+    pool = ThreadPoolExecutor(max_workers=min(32, max(1, n)))
+    try:
         futures = [pool.submit(work, i) for i in range(n)]
-        for f in as_completed(futures):
-            f.result()
+        pending = set(futures)
+
+        while pending:
+            done, pending = futures_wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+            for f in done:
+                f.result()
+
+            if fail_fast_triggered.is_set():
+                for f in list(pending):
+                    f.cancel()
+                break
+
+        if fail_fast_triggered.is_set() and pending:
+            deadline = time.monotonic() + 2.0
+            while pending and time.monotonic() < deadline:
+                done, pending = futures_wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                for f in done:
+                    f.result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     return all(results), results
