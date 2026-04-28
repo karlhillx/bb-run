@@ -12,6 +12,7 @@ from typing import Dict, List
 from . import __version__
 from .docker import DockerRunner
 from .host import HostRunner
+from .pipeline import get_steps_for_target, parse_parallel_block, unwrap_step_item
 from .validator import PipelineValidator
 
 
@@ -87,6 +88,101 @@ def list_targets(repo_path: Path, json_output: bool = False) -> int:
     return 0
 
 
+def _step_plan(items: List) -> List[Dict]:
+    """Return a compact, serializable plan for top-level steps."""
+    plan: List[Dict] = []
+    for i, item in enumerate(items):
+        if isinstance(item, dict) and "parallel" in item:
+            raw, fail_fast = parse_parallel_block(item["parallel"])
+            children = []
+            for j, child in enumerate(raw):
+                step = unwrap_step_item(child)
+                children.append(
+                    {
+                        "index": j + 1,
+                        "name": step.get("name", f"step {j + 1}"),
+                    }
+                )
+            plan.append(
+                {
+                    "index": i + 1,
+                    "type": "parallel",
+                    "fail_fast": fail_fast,
+                    "steps": children,
+                }
+            )
+            continue
+
+        step = unwrap_step_item(item)
+        plan.append(
+            {
+                "index": i + 1,
+                "type": "step",
+                "name": step.get("name", f"Step {i + 1}"),
+            }
+        )
+    return plan
+
+
+def dry_run(
+    repo_path: Path,
+    target: str,
+    branch: str,
+    mode: str,
+    json_output: bool = False,
+) -> int:
+    """Show the selected pipeline plan without executing steps."""
+    validator = PipelineValidator(repo_path)
+    config = validator.load()
+    if not config or "pipelines" not in config:
+        if json_output:
+            print(json.dumps({"error": "bitbucket-pipelines.yml not found or invalid"}))
+        else:
+            print("Error: Could not read or parse bitbucket-pipelines.yml")
+        return 1
+
+    steps = get_steps_for_target(config, target)
+    if not steps:
+        if json_output:
+            print(json.dumps({"error": f"No steps found for target: {target}"}))
+        else:
+            print(f"No steps found for target: {target}")
+            print("Hint: bb-run --list-targets")
+        return 1
+
+    plan = _step_plan(steps)
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "target": target,
+                    "branch": branch,
+                    "mode": mode,
+                    "default_image": config.get("image", "atlassian/default-image:latest"),
+                    "steps": plan,
+                }
+            )
+        )
+        return 0
+
+    print("Dry run — no commands executed")
+    print(f"Repository: {repo_path}")
+    print(f"Target: {target}")
+    print(f"Branch: {branch}")
+    print(f"Mode: {mode.upper()}")
+    print(f"Image: {config.get('image', 'atlassian/default-image:latest')}")
+    print("\nPlan:")
+    for entry in plan:
+        if entry["type"] == "parallel":
+            note = "fail-fast" if entry["fail_fast"] else "no fail-fast"
+            print(f"  {entry['index']}. parallel ({len(entry['steps'])} steps, {note})")
+            for child in entry["steps"]:
+                print(f"     {child['index']}. {child['name']}")
+        else:
+            print(f"  {entry['index']}. {entry['name']}")
+    return 0
+
+
 def run_pipeline(
     repo_path: Path,
     target: str,
@@ -156,6 +252,7 @@ Examples:
   bb-run --validate                        # Validate YAML only
   bb-run --list-targets --json             # List targets as JSON
   bb-run --validate --json                 # Validate as JSON
+  bb-run --dry-run                         # Show selected steps without executing
   python3 -m bbrun --version               # If bb-run is not on PATH
         """,
     )
@@ -207,6 +304,11 @@ Examples:
         help="Validate YAML only, do not run",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the selected target plan without executing steps",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print variables from -v/--variables before the run",
@@ -219,8 +321,8 @@ Examples:
 
     args = parser.parse_args()
 
-    if args.json and not (args.list_targets or args.validate):
-        print("Error: --json is only supported with --list-targets or --validate")
+    if args.json and not (args.list_targets or args.validate or args.dry_run):
+        print("Error: --json is only supported with --list-targets, --validate, or --dry-run")
         return 2
 
     try:
@@ -250,6 +352,15 @@ Examples:
 
     if args.validate:
         return validate(repo_path, json_output=args.json)
+
+    if args.dry_run:
+        return dry_run(
+            repo_path,
+            target=args.target,
+            branch=args.branch,
+            mode=args.mode,
+            json_output=args.json,
+        )
 
     pipeline_file = repo_path / "bitbucket-pipelines.yml"
     if not pipeline_file.exists():

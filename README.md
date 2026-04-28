@@ -124,6 +124,14 @@ bb-run --list-targets
 bb-run --list-targets --json
 ```
 
+### Preview a run without executing commands
+
+```bash
+bb-run --dry-run
+bb-run --target branches.feature/my-work --branch feature/my-work --dry-run
+bb-run --dry-run --json
+```
+
 ## Target Syntax
 
 bb-run uses the same target naming as Bitbucket Pipelines:
@@ -133,6 +141,8 @@ bb-run uses the same target naming as Bitbucket Pipelines:
 - `tags.<tag-name>`
 - `custom.<name>` for pipelines under `pipelines: custom:`
 - `pull-requests.<pattern>` for pipelines under `pipelines: pull-requests:`
+
+For `branches.*`, `tags.*`, and `pull-requests.*`, bb-run first tries an exact key match and then falls back to Bitbucket-style wildcard keys like `feature/*`, `release/**`, `v*`, or `**`.
 
 ## Modes
 

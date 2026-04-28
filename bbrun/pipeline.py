@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 import threading
 import time
@@ -16,6 +17,60 @@ def unwrap_step_item(item: Any) -> Dict:
     if isinstance(item, dict):
         return item.get("step", item)
     return {}
+
+
+def _pattern_specificity(pattern: str) -> Tuple[int, int]:
+    """Rank glob patterns so precise matches beat broad catch-alls like ``**``."""
+    wildcard_count = sum(pattern.count(ch) for ch in "*?[")
+    literal_count = len(pattern) - wildcard_count
+    return wildcard_count, -literal_count
+
+
+def _pattern_steps(pipelines: Dict[str, Any], group: str, name: str) -> List:
+    """Resolve Bitbucket target groups with exact match, then glob-style patterns."""
+    entries = pipelines.get(group, {})
+    if not isinstance(entries, dict):
+        return []
+    if name in entries:
+        return entries[name]
+
+    matches = [
+        (pattern, steps)
+        for pattern, steps in entries.items()
+        if fnmatch.fnmatchcase(name, pattern)
+    ]
+    if not matches:
+        return []
+    matches.sort(key=lambda item: _pattern_specificity(str(item[0])))
+    return matches[0][1]
+
+
+def get_steps_for_target(config: Dict[str, Any], target: str) -> List:
+    """Return pipeline steps for a target, including Bitbucket-style wildcard keys."""
+    pipelines = config.get("pipelines", {})
+    if not isinstance(pipelines, dict):
+        return []
+
+    if target == "default":
+        return pipelines.get("default", [])
+
+    if target.startswith("branches."):
+        return _pattern_steps(pipelines, "branches", target.split(".", 1)[1])
+
+    if target.startswith("tags."):
+        return _pattern_steps(pipelines, "tags", target.split(".", 1)[1])
+
+    if target.startswith("custom."):
+        custom = pipelines.get("custom", {})
+        if isinstance(custom, dict):
+            return custom.get(target.split(".", 1)[1], [])
+        return []
+
+    if target.startswith("pull-requests."):
+        return _pattern_steps(pipelines, "pull-requests", target.split(".", 1)[1])
+
+    value = pipelines.get(target, [])
+    return value if isinstance(value, list) else []
 
 
 def parallel_failure_summaries(raw_items: List[Any], each_ok: List[bool]) -> List[str]:

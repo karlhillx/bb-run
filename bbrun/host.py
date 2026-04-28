@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from .artifacts import ArtifactSession
 from .errors import explain_process_launch_error, report_step_script_failure
 from .pipeline import (
+    get_steps_for_target,
     parallel_failure_summaries,
     parse_parallel_block,
     run_parallel_group,
@@ -246,28 +247,4 @@ class HostRunner:
 
     def _get_steps(self, config: Dict, target: str) -> List:
         """Get steps for a given target."""
-        pipelines = config.get("pipelines", {})
-
-        if target == "default":
-            return pipelines.get("default", [])
-
-        if target.startswith("branches."):
-            branch_name = target.split(".", 1)[1]
-            return pipelines.get("branches", {}).get(branch_name, [])
-
-        if target.startswith("tags."):
-            tag_name = target.split(".", 1)[1]
-            return pipelines.get("tags", {}).get(tag_name, [])
-
-        if target.startswith("custom."):
-            custom_name = target.split(".", 1)[1]
-            return pipelines.get("custom", {}).get(custom_name, [])
-
-        if target.startswith("pull-requests."):
-            pr_name = target.split(".", 1)[1]
-            return pipelines.get("pull-requests", {}).get(pr_name, [])
-
-        if target in pipelines:
-            return pipelines[target]
-
-        return []
+        return get_steps_for_target(config, target)
