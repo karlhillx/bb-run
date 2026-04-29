@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] — 2026-04-28
 
 ### Added
 
@@ -17,5 +17,5 @@ All notable changes to this project are documented here. This project follows [S
 
 Initial stable release on PyPI: Bitbucket Pipelines YAML runner in Docker or host mode, parallel steps, fail-fast, and artifact modeling.
 
-[Unreleased]: https://github.com/karlhillx/bb-run/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/karlhillx/bb-run/releases/tag/v1.0.0
+[Unreleased]: https://github.com/karlhillx/bb-run/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/karlhillx/bb-run/releases/tag/v1.1.0
