@@ -2,9 +2,10 @@
 Pipeline YAML Validator
 """
 
-import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
+
+import yaml
 
 from .artifacts import iter_upload_specs
 from .pipeline import parse_parallel_block
@@ -16,15 +17,15 @@ class PipelineValidator:
     def __init__(self, repo_path: Path):
         self.repo_path = Path(repo_path)
         self.pipeline_file = self.repo_path / "bitbucket-pipelines.yml"
-        self._config: Optional[Dict] = None
+        self._config: dict | None = None
     
-    def load(self) -> Optional[Dict]:
+    def load(self) -> dict | None:
         """Load and parse the pipeline YAML."""
         if not self.pipeline_file.exists():
             return None
 
         try:
-            with open(self.pipeline_file, "r", encoding="utf-8") as f:
+            with open(self.pipeline_file, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
         except yaml.YAMLError as e:
             print(f"YAML parse error: {e}")
@@ -153,6 +154,6 @@ class PipelineValidator:
                 print(f"{prefix}  → pipe: {pipe_name}{vars_str}")
     
     @property
-    def config(self) -> Optional[Dict]:
+    def config(self) -> dict | None:
         """Get the loaded configuration."""
         return self._config

@@ -1,77 +1,108 @@
-# Byte-compiled / optimized / DLL files
+# Canonical Python project .gitignore for Jacobs repos
+# Source of truth: lynx-devops/templates/python.gitignore
+# Sync: scripts/sync-gitignore.sh
+
+# Python bytecode and cache
 __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
+# C extensions / native binaries
 *.so
-
-# bb-run local artifact cache
-.bb-run/
+*.dll
+*.dylib
 
 # Distribution / packaging
 .Python
 build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
+dist*/
+site/
 wheels/
-*.egg-info/
+*.egg*
+.eggs/
 .installed.cfg
-*.egg
-
-# PyInstaller
+sdist/
+pip-wheel-metadata/
+__pypackages__/
+*.whl
 *.manifest
 *.spec
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Environments
-.env
-.venv
-env/
+# Virtual environments
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
+env/
+.conda*/
 
-# IDE
-.idea/
+# Environment files
+.env*
+!.env.example
+*.local
+
+# Test / coverage / type / lint caches and reports
+.coverage*
+.cache/
+.hypothesis/
+.mypy_cache/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.tox/
+cover/
+coverage.xml
+htmlcov/
+junit*.xml
+TEST*.xml
+
+# Test output directories
+tests/data/output/
+integration_tests/output_files/
+**/Output_Files/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# SBOM artifacts
+sbom/
+
+# Docker
+docker-support/
+.dockerignore
+docker-compose.override.yml
+
+# Logs / runtime files
+*.log
+logs/
+
+# Databases
+*.sqlite*
+*.db
+
+# Node / Yarn artifacts (mixed-stack repos)
+node_modules/
+.npm
+.pnp.*
+.yarn/*
+
+# Binary packages / archives
+*.app
+*.exe
+*.zip
+
+# IDE / editor configs
 .vscode/
-*.swp
-*.swo
-*~
+.idea/
+*.sw[a-p]
 
-# OS
+# OS-generated files
 .DS_Store
 Thumbs.db
 
-# Project specific
-*.log
+# Temporary / backup files
+~$*
+*.tmp
+*.bak
+*.wbk
+*~
+# Project-specific additions for bb-run
+.bb-run/

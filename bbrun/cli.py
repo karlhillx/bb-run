@@ -3,11 +3,10 @@
 bb-run CLI - Bitbucket Pipelines Local Runner
 """
 
-import sys
-import json
 import argparse
+import json
+import sys
 from pathlib import Path
-from typing import Dict, List
 
 from . import __version__
 from .docker import DockerRunner
@@ -16,9 +15,9 @@ from .pipeline import get_steps_for_target, parse_parallel_block, unwrap_step_it
 from .validator import PipelineValidator
 
 
-def _collect_targets(config: Dict) -> List[str]:
+def _collect_targets(config: dict) -> list[str]:
     """Collect available pipeline targets from config."""
-    targets: List[str] = []
+    targets: list[str] = []
     pipelines = config.get("pipelines", {})
 
     if "default" in pipelines:
@@ -88,9 +87,9 @@ def list_targets(repo_path: Path, json_output: bool = False) -> int:
     return 0
 
 
-def _step_plan(items: List) -> List[Dict]:
+def _step_plan(items: list) -> list[dict]:
     """Return a compact, serializable plan for top-level steps."""
-    plan: List[Dict] = []
+    plan: list[dict] = []
     for i, item in enumerate(items):
         if isinstance(item, dict) and "parallel" in item:
             raw, fail_fast = parse_parallel_block(item["parallel"])
@@ -192,10 +191,7 @@ def run_pipeline(
     verbose: bool,
 ) -> int:
     """Run a pipeline in the specified mode."""
-    if mode == "docker":
-        runner = DockerRunner(repo_path)
-    else:
-        runner = HostRunner(repo_path)
+    runner = DockerRunner(repo_path) if mode == "docker" else HostRunner(repo_path)
 
     success = runner.run(
         target=target,

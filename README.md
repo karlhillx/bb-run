@@ -234,21 +234,56 @@ bb-run automatically looks for `bitbucket-pipelines.yml` in your current directo
 bb-run --repo /path/to/repo
 ```
 
+## Exit Codes
+
+bb-run uses conventional exit codes so it composes well in scripts and CI:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (pipeline passed, or validation/listing succeeded) |
+| `1` | Runtime failure (a step failed, file missing, or pipeline invalid) |
+| `2` | Usage error (bad arguments, e.g. malformed `-v KEY=VALUE`) |
+| `130` | Interrupted with `Ctrl-C` |
+
+## Use as a library
+
+bb-run ships type hints (`py.typed`) and a small public API, so you can drive it from Python:
+
+```python
+from bbrun import HostRunner, DockerRunner, PipelineValidator
+
+# Validate without running
+validator = PipelineValidator(".")
+if validator.validate():
+    validator.show_summary()
+
+# Run the default pipeline on the host
+runner = HostRunner(".")
+ok = runner.run(target="default", branch="main", variables={"ENVIRONMENT": "staging"})
+raise SystemExit(0 if ok else 1)
+```
+
+`DockerRunner` and `HostRunner` share a common `BaseRunner`; both expose the same
+`run(target, branch, variables, verbose)` signature and return `True` on success.
+
 ## Supported vs Unsupported Bitbucket Features
 
 **Supported (today):**
 
 - `default`, `branches.<name>`, `tags.<name>`, `custom.<name>`, and `pull-requests.<pattern>` targets
+- Bitbucket-style wildcard target keys (`feature/*`, `release/**`, `v*`, `**`)
 - Step `script` execution (sequential)
-- Basic environment variables (Bitbucket-style values)
-- Docker images per step (Docker mode)
+- `parallel:` groups with group-level and per-step `fail-fast`
+- Artifacts: shared / scoped / test-reports uploads, `capture-on`, and selective `download`
+- Per-step Docker images (Docker mode)
+- Bitbucket-style environment variables and user-supplied `-v KEY=VALUE`
 
 **Not yet supported / simplified:**
 
 - Pipes (listed but not executed)
-- Parallel steps or step conditions
-- Services, caches, and artifacts
-- Deployment environments, manual triggers, or step size
+- Services and caches
+- Deployment environments, manual triggers, and step size
+- `after-script` and step conditions
 
 ## Requirements
 

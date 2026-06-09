@@ -2,31 +2,34 @@
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait as futures_wait, FIRST_COMPLETED
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as futures_wait
+from typing import Any
 
 from .errors import explain_process_launch_error
 
 
-def unwrap_step_item(item: Any) -> Dict:
+def unwrap_step_item(item: Any) -> dict:
     """Normalize a pipeline list entry to the inner step dict."""
     if isinstance(item, dict):
         return item.get("step", item)
     return {}
 
 
-def _pattern_specificity(pattern: str) -> Tuple[int, int]:
+def _pattern_specificity(pattern: str) -> tuple[int, int]:
     """Rank glob patterns so precise matches beat broad catch-alls like ``**``."""
     wildcard_count = sum(pattern.count(ch) for ch in "*?[")
     literal_count = len(pattern) - wildcard_count
     return wildcard_count, -literal_count
 
 
-def _pattern_steps(pipelines: Dict[str, Any], group: str, name: str) -> List:
+def _pattern_steps(pipelines: dict[str, Any], group: str, name: str) -> list:
     """Resolve Bitbucket target groups with exact match, then glob-style patterns."""
     entries = pipelines.get(group, {})
     if not isinstance(entries, dict):
@@ -45,7 +48,7 @@ def _pattern_steps(pipelines: Dict[str, Any], group: str, name: str) -> List:
     return matches[0][1]
 
 
-def get_steps_for_target(config: Dict[str, Any], target: str) -> List:
+def get_steps_for_target(config: dict[str, Any], target: str) -> list:
     """Return pipeline steps for a target, including Bitbucket-style wildcard keys."""
     pipelines = config.get("pipelines", {})
     if not isinstance(pipelines, dict):
@@ -73,9 +76,9 @@ def get_steps_for_target(config: Dict[str, Any], target: str) -> List:
     return value if isinstance(value, list) else []
 
 
-def parallel_failure_summaries(raw_items: List[Any], each_ok: List[bool]) -> List[str]:
+def parallel_failure_summaries(raw_items: list[Any], each_ok: list[bool]) -> list[str]:
     """Human-readable labels for failed parallel children (for logging)."""
-    lines: List[str] = []
+    lines: list[str] = []
     for i, succeeded in enumerate(each_ok):
         if succeeded:
             continue
@@ -90,7 +93,7 @@ def parallel_failure_summaries(raw_items: List[Any], each_ok: List[bool]) -> Lis
     return lines
 
 
-def parse_parallel_block(parallel_val: Any) -> Tuple[List[Any], bool]:
+def parse_parallel_block(parallel_val: Any) -> tuple[list[Any], bool]:
     """
     Bitbucket format: parallel: { fail-fast?: bool, steps: [ { step: ... }, ... ] }
     Also accepts parallel: [ { step: ... }, ... ] as a list of steps.
@@ -110,7 +113,7 @@ def parse_parallel_block(parallel_val: Any) -> Tuple[List[Any], bool]:
     return [], False
 
 
-def abort_siblings_on_step_failure(step: Dict, group_fail_fast: bool) -> bool:
+def abort_siblings_on_step_failure(step: dict, group_fail_fast: bool) -> bool:
     """
     Whether a failed step should trigger stopping other parallel siblings.
     Mirrors Bitbucket: group fail-fast + per-step fail-fast overrides.
@@ -123,13 +126,13 @@ def abort_siblings_on_step_failure(step: Dict, group_fail_fast: bool) -> bool:
 
 
 def run_parallel_group(
-    raw_items: List[Any],
+    raw_items: list[Any],
     *,
     group_fail_fast: bool,
-    spawn: Callable[[int, Dict], Optional[subprocess.Popen]],
+    spawn: Callable[[int, dict], subprocess.Popen | None],
     wait: Callable[[subprocess.Popen], int] = lambda p: p.wait(),
     terminate: Callable[[subprocess.Popen], None] = lambda p: p.terminate(),
-) -> Tuple[bool, List[bool]]:
+) -> tuple[bool, list[bool]]:
     """
     Run unwrapped parallel child steps concurrently.
 
@@ -143,9 +146,9 @@ def run_parallel_group(
     if n == 0:
         return True, []
 
-    active: List[Optional[subprocess.Popen]] = [None] * n
+    active: list[subprocess.Popen | None] = [None] * n
     lock = threading.Lock()
-    results: List[bool] = [True] * n
+    results: list[bool] = [True] * n
     fail_fast_triggered = threading.Event()
 
     def terminate_others(except_index: int) -> None:
@@ -153,10 +156,8 @@ def run_parallel_group(
             for j, proc in enumerate(active):
                 if j == except_index or proc is None:
                     continue
-                try:
+                with contextlib.suppress(ProcessLookupError, OSError):
                     terminate(proc)
-                except (ProcessLookupError, OSError):
-                    pass
 
     def work(i: int) -> None:
         step = steps[i]
@@ -164,7 +165,7 @@ def run_parallel_group(
             results[i] = True
             return
 
-        proc: Optional[subprocess.Popen]
+        proc: subprocess.Popen | None
         try:
             proc = spawn(i, step)
         except Exception as e:

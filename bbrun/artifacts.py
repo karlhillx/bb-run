@@ -12,7 +12,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 # Sentinel: restore all shared layers from prior steps (public for tests / introspection)
 DOWNLOAD_ALL_PRIOR_SHARED = object()
@@ -22,10 +22,10 @@ DOWNLOAD_ALL_PRIOR_SHARED = object()
 class UploadSpec:
     """One artifact upload definition."""
 
-    name: Optional[str]
+    name: str | None
     type: str  # shared | scoped | test-reports
-    paths: List[str]
-    ignore_paths: List[str]
+    paths: list[str]
+    ignore_paths: list[str]
     capture_on: str  # always | success | failed
 
 
@@ -40,7 +40,7 @@ def _norm_capture_on(raw: Any) -> str:
     return v
 
 
-def _parse_upload_dict(entry: Dict[str, Any]) -> UploadSpec:
+def _parse_upload_dict(entry: dict[str, Any]) -> UploadSpec:
     name = entry.get("name")
     if name is not None:
         name = str(name)
@@ -62,7 +62,7 @@ def _parse_upload_dict(entry: Dict[str, Any]) -> UploadSpec:
     )
 
 
-def iter_upload_specs(step: Dict[str, Any]) -> List[UploadSpec]:
+def iter_upload_specs(step: dict[str, Any]) -> list[UploadSpec]:
     """Collect artifact upload definitions from a step (may be empty)."""
     raw = step.get("artifacts")
     if raw is None:
@@ -83,7 +83,7 @@ def iter_upload_specs(step: Dict[str, Any]) -> List[UploadSpec]:
     if not isinstance(raw, dict):
         return []
 
-    specs: List[UploadSpec] = []
+    specs: list[UploadSpec] = []
 
     paths = raw.get("paths")
     if paths is not None:
@@ -113,7 +113,7 @@ def iter_upload_specs(step: Dict[str, Any]) -> List[UploadSpec]:
     return specs
 
 
-def _list_str(raw: Any) -> List[str]:
+def _list_str(raw: Any) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, str):
@@ -121,7 +121,7 @@ def _list_str(raw: Any) -> List[str]:
     return [str(x) for x in raw]
 
 
-def parse_download_rule(step: Dict[str, Any]) -> Union[object, bool, List[str]]:
+def parse_download_rule(step: dict[str, Any]) -> object | bool | list[str]:
     """
     Return:
       DOWNLOAD_ALL_PRIOR_SHARED — restore all prior shared layers (default).
@@ -151,9 +151,9 @@ def should_capture(capture_on: str, step_ok: bool) -> bool:
     return True
 
 
-def _collect_excluded_paths(repo: Path, ignore_patterns: List[str]) -> Set[Path]:
+def _collect_excluded_paths(repo: Path, ignore_patterns: list[str]) -> set[Path]:
     repo = repo.resolve()
-    out: Set[Path] = set()
+    out: set[Path] = set()
     for pat in ignore_patterns:
         if not pat.strip():
             continue
@@ -169,12 +169,12 @@ def _collect_excluded_paths(repo: Path, ignore_patterns: List[str]) -> Set[Path]
 
 
 def expand_artifact_files(
-    repo: Path, patterns: List[str], ignore_patterns: List[str]
-) -> List[Path]:
+    repo: Path, patterns: list[str], ignore_patterns: list[str]
+) -> list[Path]:
     """Resolve glob patterns relative to repo; return sorted unique files."""
     repo = repo.resolve()
     excluded = _collect_excluded_paths(repo, ignore_patterns)
-    found: Set[Path] = set()
+    found: set[Path] = set()
 
     for raw in patterns:
         pat = str(raw).strip()
@@ -206,7 +206,7 @@ def expand_artifact_files(
     return sorted(found)
 
 
-def copy_files_into_layer(repo: Path, files: List[Path], layer_root: Path) -> int:
+def copy_files_into_layer(repo: Path, files: list[Path], layer_root: Path) -> int:
     """Copy files preserving paths relative to repo. Returns file count."""
     repo = repo.resolve()
     layer_root.mkdir(parents=True, exist_ok=True)
@@ -238,7 +238,7 @@ def merge_layer_into_repo(layer_root: Path, repo: Path) -> None:
 
 @dataclass
 class SharedLayer:
-    name: Optional[str]
+    name: str | None
     root: Path
 
 
@@ -250,12 +250,13 @@ class ArtifactSession:
 
     def __init__(self, repo_path: Path) -> None:
         self.repo = repo_path.resolve()
-        self.base = self.repo / ".bb-run" / "artifacts" / f"run_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        run_id = f"run_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+        self.base = self.repo / ".bb-run" / "artifacts" / run_id
         self.base.mkdir(parents=True, exist_ok=True)
-        self.shared_layers: List[SharedLayer] = []
+        self.shared_layers: list[SharedLayer] = []
         self._layer_seq = 0
 
-    def prepare_for_step(self, step: Dict[str, Any]) -> None:
+    def prepare_for_step(self, step: dict[str, Any]) -> None:
         """Restore prior shared artifacts before the step runs."""
         rule = parse_download_rule(step)
         if rule is False:
@@ -270,7 +271,7 @@ class ArtifactSession:
                 )
             return
         if isinstance(rule, list):
-            wanted = {x for x in rule}
+            wanted = set(rule)
             if not wanted:
                 print(
                     "📥 Artifacts: selective download list empty — nothing restored"
@@ -292,7 +293,7 @@ class ArtifactSession:
                 )
             return
 
-    def capture_after_step(self, step: Dict[str, Any], step_ok: bool) -> None:
+    def capture_after_step(self, step: dict[str, Any], step_ok: bool) -> None:
         """Capture declared artifacts after a step finishes."""
         for spec in iter_upload_specs(step):
             if not should_capture(spec.capture_on, step_ok):
@@ -316,8 +317,9 @@ class ArtifactSession:
             elif spec.type == "scoped":
                 scoped_dir = self.base / "scoped" / (spec.name or f"layer_{self._layer_seq}")
                 shutil.copytree(layer_root, scoped_dir, dirs_exist_ok=True)
+                label = spec.name or "unnamed"
                 print(
-                    f"📦 Artifacts: saved scoped [{spec.name or 'unnamed'}] ({n} file(s), not passed on)"
+                    f"📦 Artifacts: saved scoped [{label}] ({n} file(s), not passed on)"
                 )
             elif spec.type == "test-reports":
                 tr_dir = self.base / "test-reports" / (spec.name or f"layer_{self._layer_seq}")
