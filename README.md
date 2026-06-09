@@ -46,9 +46,15 @@ python3 -m bbrun --validate
 
 ### Homebrew
 
-There is **no official Homebrew formula** in this repository yet. Use **pip** or **pipx** above for the supported install path.
+Install from the [karlhillx/tap](https://github.com/karlhillx/homebrew-tap) tap:
 
-To package for Homebrew later: submit a formula to [homebrew-core](https://github.com/Homebrew/homebrew-core) (tagged releases + tests that do not require Docker are typical expectations), or maintain a **third-party tap** and document it in your fork; see [Homebrew docs](https://docs.brew.sh/).
+```bash
+brew install karlhillx/tap/bb-run
+```
+
+This bundles bb-run and its runtime dependency (PyYAML) into an isolated Homebrew-managed Python environment. Docker is still only required for `--mode docker`.
+
+There is not yet a formula in [homebrew-core](https://github.com/Homebrew/homebrew-core) (`brew install bb-run` with no tap). That path requires meeting Homebrew’s notability bar (roughly 75+ GitHub stars / 30+ forks) and maintainer review.
 
 ### from source
 
