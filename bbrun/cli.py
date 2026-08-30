@@ -311,8 +311,8 @@ Examples:
         "--repo",
         "-r",
         default=".",
-        help="Path to repository (default: current directory; walks up for "
-        "bitbucket-pipelines.yml)",
+        help="Path to repository (default: . — walk up for "
+        "bitbucket-pipelines.yml; an explicit path is used as-is)",
     )
     parser.add_argument(
         "--target",
@@ -386,7 +386,7 @@ Examples:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print resolved target, scripts, services, caches, and docker argv",
+        help="Print resolved target/branch/tag, extra -v values, and docker argv",
     )
     parser.add_argument(
         "--version",

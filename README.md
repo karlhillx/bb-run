@@ -11,8 +11,8 @@
 
 - **Test before pushing** - Catch CI failures locally before committing
 - **Fast iteration** - No waiting for Bitbucket's pipeline queue
-- **Works on uv repos** - Auto-picks a target when there is no `default` pipeline; falls back to host when Docker is down
-- **Two modes** - Docker for an environment closer to Bitbucket; host mode needs **no Docker** for script-only steps
+- **Works on uv repos** - Auto-picks a target when there is no `default` pipeline; `--mode auto` (the default) uses Docker if the daemon is up, otherwise host
+- **Two modes** - Docker for an environment closer to Bitbucket; host mode needs **no Docker** for script-only steps (service sidecars still need Docker)
 - **Parallel steps** - `parallel:` groups run concurrently; group and per-step `fail-fast` stop sibling processes when a failing step demands it
 - **Services and caches** - Sidecars (e.g. RabbitMQ) and `definitions.caches` so integration steps can pass locally
 - **Small install** - One runtime dependency: **PyYAML** (see `pyproject.toml`). Docker is only required for `--mode docker` and for steps that declare `services:`
@@ -21,7 +21,7 @@
 
 ### uvx (recommended — zero install)
 
-Works in any checkout that has `bitbucket-pipelines.yml`, including uv-based Jacobs-family repos:
+Works in any checkout that has `bitbucket-pipelines.yml`:
 
 ```bash
 cd /path/to/your/repo
@@ -77,23 +77,22 @@ uv run python -m bbrun --version
 
 ## Using bb-run reliably
 
-- Run commands from the **repository root** (the directory that contains `bitbucket-pipelines.yml`), or pass **`--repo /path/to/that/root`**. From a subdirectory, bb-run **walks up** until it finds the YAML.
-- Prefer **`bb-run --validate`** first; it checks the file without Docker. If you do not have Docker, `--mode auto` (the default) uses **host** for runs.
+- From a subdirectory, `bb-run` (default `--repo .`) **walks up** to the nearest `bitbucket-pipelines.yml`. An explicit `--repo /path` is used as-is and is not walked.
+- Prefer **`bb-run --validate`** first; it checks the file without Docker. `--mode auto` (the default) uses Docker when `docker info` succeeds, otherwise **host**.
 - On macOS/Linux where `pip install` is restricted (PEP 668), prefer **`uvx`**, **`uv tool`**, **`pipx`**, or a venv.
 
-### uv / Jacobs-family repos
+### uv-style pipelines (no `default`)
 
-Pipelines that look like pylynx-mq, orchestrator, and the rest of that uv template typically have **no `default` pipeline**. They use `pull-requests.**` / `branches.master`, `definitions.caches` (`uv`, `pre-commit`), and RabbitMQ as a `services:` sidecar.
+Many uv + Bitbucket templates only define `pull-requests.**` and `branches.master`, plus `definitions.caches` (`uv`, `pre-commit`) and a RabbitMQ `services:` sidecar.
 
 ```bash
-cd ../pylynx-mq
+cd /path/to/that/repo
 uvx bb-run                          # auto target + auto mode
 uvx bb-run --step "Unit tests"      # one named step
-uvx bb-run --step "Code quality"
 uvx bb-run --dry-run --json         # plan only
 ```
 
-Integration and scenario steps start RabbitMQ via Docker and publish it on `127.0.0.1` (those scripts set `RABBIT_HOST=127.0.0.1`). Unit and lint steps do not need Docker when you use host mode.
+`--target` is chosen from the current git branch when that pipeline exists. `BITBUCKET_BRANCH` is still `LOCAL` unless you pass `--branch`. Integration steps that declare `services:` need a Docker daemon even in host mode. Private git extras (for example an `unclass` extra) need credentials available to the step; Docker mode does **not** copy host `GIT_ASKPASS` / `PATH` into the container.
 
 ## Quick Start
 
@@ -110,7 +109,7 @@ bb-run --validate
 bb-run
 ```
 
-With no `--target`, bb-run picks `branches.<current-git-branch>` when that exists, otherwise `default`, otherwise `pull-requests.**`, otherwise the first listed target.
+With no `--target`, the CLI picks `branches.<current-git-branch>` when that resolves to steps, otherwise `default`, otherwise `pull-requests.**` (or the first `pull-requests` key), otherwise the first listed target. This auto-select is CLI-only; `HostRunner.run()` / `DockerRunner.run()` still default to `target="default"`.
 
 ### Run a specific branch
 
@@ -123,6 +122,14 @@ bb-run -t branches.main
 
 ```bash
 bb-run --branch feature/my-work
+```
+
+`--branch` sets `BITBUCKET_BRANCH` (default `LOCAL`). It does not change target selection; use `--target` for that.
+
+### Tag pipelines
+
+```bash
+bb-run --target tags.v1.2.3 --tag v1.2.3
 ```
 
 ### Run on your host (no Docker)
@@ -162,6 +169,7 @@ bb-run --dry-run --json
 ```bash
 bb-run --step "Unit tests"
 bb-run --only "Code quality" --only "Unit tests"
+bb-run --no-services --no-cache   # skip sidecars and cache restore/save
 ```
 
 ## Target Syntax
@@ -190,8 +198,10 @@ Runs steps in Docker containers matching Bitbucket's build environment.
 bb-run --mode docker
 ```
 
-**Pros:** Faithful reproduction of Bitbucket's environment  
-**Cons:** Requires Docker, images may take time to download
+**Pros:** Closer to Bitbucket (image `PATH`, per-step `image:`)  
+**Cons:** Requires Docker; images may take time to download
+
+The container does not inherit your host environment. Only Bitbucket variables, `HOME=/root`, and `-v KEY=VALUE` are passed in. That keeps macOS `PATH` / `GIT_ASKPASS` out of the Linux image.
 
 ### Host Mode
 
@@ -203,6 +213,8 @@ bb-run --mode host
 
 **Pros:** Fast, no image downloads  
 **Cons:** May differ from Bitbucket's environment (Python vs Python3, etc.)
+
+Host mode starts from your process environment (then overlays Bitbucket variables and `-v`). `pip` → `pip3` and `--break-system-packages` apply here only.
 
 ## Parallel steps
 
@@ -285,15 +297,17 @@ bb-run --target branches.main
 bb-run --verbose
 ```
 
-`--verbose` prints the resolved target, extra `-v` variables, full scripts, services, cache mounts, and the Docker argv.
+`--verbose` prints the resolved target, branch, tag, extra `-v` values, and any `--step` filter. Host mode then prints the full joined script (normally truncated). Docker mode prints the `docker run` argv. Services and caches already print during a normal run.
 
 ## Configuration
 
-bb-run automatically looks for `bitbucket-pipelines.yml` in your current directory and parent directories. Use `--repo` to specify a different path:
+With the default `--repo .`, bb-run uses `bitbucket-pipelines.yml` in the current directory, or walks parents until it finds one. `--repo /path` must already be that directory (no walk-up):
 
 ```bash
 bb-run --repo /path/to/repo
 ```
+
+`--json` is only valid with `--list-targets`, `--validate`, or `--dry-run`.
 
 ## Exit Codes
 
@@ -311,21 +325,24 @@ bb-run uses conventional exit codes so it composes well in scripts and CI:
 bb-run ships type hints (`py.typed`) and a small public API, so you can drive it from Python:
 
 ```python
-from bbrun import HostRunner, DockerRunner, PipelineValidator, resolve_auto_target
+from bbrun import HostRunner, PipelineValidator, find_repo_root, resolve_auto_target
 
-# Validate without running
-validator = PipelineValidator(".")
+# Walk-up and auto-target are helpers; runners do not call them for you
+repo = find_repo_root(".") or "."
+validator = PipelineValidator(repo)
 if validator.validate():
     validator.show_summary()
 
-# Run the default pipeline on the host
-runner = HostRunner(".")
-ok = runner.run(target="default", branch="main", variables={"ENVIRONMENT": "staging"})
+config = validator.load() or {}
+ok = HostRunner(repo).run(
+    target=resolve_auto_target(config, None),
+    branch="main",
+    variables={"ENVIRONMENT": "staging"},
+)
 raise SystemExit(0 if ok else 1)
 ```
 
-`DockerRunner` and `HostRunner` share a common `BaseRunner`; both expose the same
-`run(...)` signature and return `True` on success.
+`DockerRunner` and `HostRunner` share `BaseRunner` and the same `run(...)` signature (returns `True` on success). Optional kwargs: `tag`, `step_names`, `enable_services`, `enable_caches`, `verbose`.
 
 ## Supported vs Unsupported Bitbucket Features
 
@@ -333,7 +350,7 @@ raise SystemExit(0 if ok else 1)
 
 - `default`, `branches.<name>`, `tags.<name>`, `custom.<name>`, and `pull-requests.<pattern>` targets
 - Bitbucket-style wildcard target keys (`feature/*`, `release/**`, `v*`, `**`)
-- Auto target selection and walk-up to `bitbucket-pipelines.yml`
+- Auto target selection and walk-up to `bitbucket-pipelines.yml` (CLI; or call `resolve_auto_target` / `find_repo_root`)
 - Step `script` and `after-script` execution (sequential; after-script in a new shell)
 - `parallel:` groups with group-level and per-step `fail-fast`
 - Artifacts: shared / scoped / test-reports uploads, `capture-on`, and selective `download`
@@ -375,7 +392,7 @@ bb-run sets these Bitbucket-specific environment variables:
 | `BITBUCKET_BUILD_NUMBER` | Build number (set to `"1"`) |
 | `BITBUCKET_CLONE_DIR` | Repo root on the host; in Docker mode the path **inside** the container (`/opt/atlassian/pipelines/agent/build`) |
 | `BITBUCKET_COMMIT` | Git commit SHA (or `local` if unavailable) |
-| `BITBUCKET_BRANCH` | Branch name (from `--branch` or default) |
+| `BITBUCKET_BRANCH` | From `--branch` (default `LOCAL`, not the current git branch) |
 | `BITBUCKET_TAG` | Tag name (from `--tag`, or empty) |
 | `BITBUCKET_REPO_SLUG` | Repository directory name |
 | `BITBUCKET_REPO_UUID` | Unique run ID for this process |
@@ -424,23 +441,28 @@ Install [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/insta
 
 ### "pip: command not found"
 
-bb-run automatically translates `pip` to `pip3` and adds `--break-system-packages` for PEP 668 environments.
+In **host** mode, bb-run rewrites a leading `pip ` to `pip3 ` when `pip` is missing, and adds `--break-system-packages` on `pip3 install`. Docker mode uses whatever the image provides.
 
 ### `pytest: error: unrecognized arguments: --cov=...`
 
-Coverage flags come from the **pytest-cov** plugin. Use the `dev` extra:
+Coverage flags come from the **pytest-cov** plugin. `uv sync` installs the `dev` group (includes pytest-cov):
 
 ```bash
 uv sync
 uv run pytest --cov=bbrun --cov-report=xml tests/
 ```
 
+### Private git extras fail in Docker (`unimq`, `unclass`, …)
+
+Docker mode does not forward host git helpers. Use `--mode host` so the step sees your existing credentials, or arrange HTTPS/SSH auth inside the image.
+
 ### Image pull failures
 
-Docker Hub rate limits may cause image downloads to fail. Try:
+Registry rate limits or a missing tag may cause image downloads to fail. Try:
 1. Waiting and retrying later
 2. Using `--mode host` temporarily
-3. Configuring a Docker mirror
+3. Updating the pipeline `image:` tag if it is stale
+4. Configuring a Docker mirror
 
 ## License
 
