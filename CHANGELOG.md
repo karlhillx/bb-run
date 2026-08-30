@@ -4,6 +4,10 @@ All notable changes to this project are documented here. This project follows [S
 
 ## [Unreleased]
 
+### Fixed
+
+- Pin `astral-sh/setup-uv` to `v10.0.1`. That action no longer publishes moving major tags, so `@v10` does not resolve.
+
 ## [1.3.0] — 2026-08-30
 
 ### Added
