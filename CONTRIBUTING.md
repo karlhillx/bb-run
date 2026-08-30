@@ -7,22 +7,29 @@ Thanks for helping improve bb-run.
 ```bash
 git clone https://github.com/karlhillx/bb-run.git
 cd bb-run
-python3.12 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+uv sync
 ```
+
+`uv` creates `.venv` and installs the `dev` group (pytest, pytest-cov, ruff, ty).
 
 ## Checks before a PR
 
 ```bash
-python -m pytest tests/
-ruff check bbrun
+uv run pytest tests/
+uv run ruff check bbrun tests
+uv run ty check
 ```
 
-Optional coverage (requires `dev` / `test` extra):
+Optional coverage:
 
 ```bash
-python -m pytest --cov=bbrun --cov-report=term-missing tests/
+uv run pytest --cov=bbrun --cov-report=term-missing tests/
+```
+
+CLI smoke test (same as CI):
+
+```bash
+uv run python -m bbrun --version
 ```
 
 ## Releases

@@ -4,6 +4,7 @@ Tests for HostRunner
 
 import pytest
 import yaml
+
 from bbrun.host import HostRunner
 
 
@@ -48,11 +49,17 @@ def test_host_runner_build_env(temp_repo):
     assert env['BITBUCKET_BRANCH'] == 'feature-branch'
     assert 'BITBUCKET_REPO_SLUG' in env
     assert 'BITBUCKET_WORKSPACE' in env
+    assert env['CI'] == 'true'
+    assert env['BITBUCKET_TAG'] == ''
+    assert env['BITBUCKET_PIPELINE_UUID']
 
 
 def test_host_runner_translate_python(temp_repo, monkeypatch):
     """Test command translation for python."""
-    monkeypatch.setattr('bbrun.host.shutil.which', lambda x: None if x == 'python' else '/usr/bin/python3')
+    monkeypatch.setattr(
+        "bbrun.host.shutil.which",
+        lambda x: None if x == "python" else "/usr/bin/python3",
+    )
     
     runner = HostRunner(temp_repo)
     translated = runner._translate_command('python -m pytest')
@@ -62,7 +69,10 @@ def test_host_runner_translate_python(temp_repo, monkeypatch):
 
 def test_host_runner_translate_pip(temp_repo, monkeypatch):
     """Test command translation for pip."""
-    monkeypatch.setattr('bbrun.host.shutil.which', lambda x: None if x == 'pip' else '/usr/bin/pip3')
+    monkeypatch.setattr(
+        "bbrun.host.shutil.which",
+        lambda x: None if x == "pip" else "/usr/bin/pip3",
+    )
     
     runner = HostRunner(temp_repo)
     translated = runner._translate_command('pip install pytest')
@@ -79,4 +89,4 @@ def test_host_runner_pip3_still_gets_break_system_packages(temp_repo, monkeypatc
     
     # --break-system-packages is always added for PEP 668 macOS compatibility
     assert '--break-system-packages' in translated
-    assert 'pip3 install --break-system-packages pytest' == translated
+    assert translated == 'pip3 install --break-system-packages pytest'

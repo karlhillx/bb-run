@@ -1,0 +1,80 @@
+# Portable Python + uv CI (test fixture; mirrors Jacobs-family pipelines).
+image: ghcr.io/astral-sh/uv:0.12-python3.12-trixie
+
+options:
+  max-time: 30
+
+definitions:
+  caches:
+    uv: ~/.cache/uv
+    pre-commit: ~/.cache/pre-commit
+
+  services:
+    rabbitmq:
+      image: rabbitmq:4.2
+
+  steps:
+    - step: &code-quality
+        name: Code quality
+        caches: [uv, pre-commit]
+        script:
+          - bash scripts/ci/pipeline.sh pre-commit
+        after-script:
+          - echo "quality done"
+
+    - step: &unit-tests
+        name: Unit tests
+        caches: [uv]
+        script:
+          - bash scripts/ci/pipeline.sh pytest unit
+
+    - step: &integration-tests
+        name: Integration tests
+        caches: [uv]
+        services:
+          - rabbitmq
+        script:
+          - export RABBIT_HOST=127.0.0.1
+          - bash scripts/ci/pipeline.sh pytest integration
+
+    - step: &scenario-tests
+        name: Scenario tests
+        caches: [uv]
+        services:
+          - rabbitmq
+        script:
+          - export RABBIT_HOST=127.0.0.1
+          - bash scripts/ci/pipeline.sh pytest scenarios
+
+x-full-suite: &full-suite
+  - parallel:
+      - step: *code-quality
+      - step: *unit-tests
+  - parallel:
+      - step: *integration-tests
+      - step: *scenario-tests
+
+pipelines:
+  pull-requests:
+    "**": *full-suite
+
+  branches:
+    master: *full-suite
+
+  tags:
+    'v*':
+      - step:
+          name: Build Release + Delta Artifacts
+          script:
+            - bash scripts/ci/build-release.sh
+          artifacts:
+            - "*.zip"
+
+    '*':
+      - step:
+          name: Build Full Repo Zip
+          script:
+            - export SAFE_TAG="$(printf '%s' "$BITBUCKET_TAG" | tr '/' '-')"
+            - git archive --format=zip --output="repo-${SAFE_TAG}.zip" HEAD
+          artifacts:
+            - "*.zip"

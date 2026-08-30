@@ -100,6 +100,22 @@ class PipelineValidator:
                 print(f"   {tag}:")
                 for item in items:
                     self._show_step(item, indent=4)
+
+        custom = pipelines.get("custom", {})
+        if custom:
+            print("\n🔧 custom:")
+            for name, items in custom.items():
+                print(f"   {name}:")
+                for item in items:
+                    self._show_step(item, indent=4)
+
+        pull_requests = pipelines.get("pull-requests", {})
+        if pull_requests:
+            print("\n🔁 pull-requests:")
+            for name, items in pull_requests.items():
+                print(f"   {name}:")
+                for item in items:
+                    self._show_step(item, indent=4)
     
     def _show_step(self, item: Any, indent: int = 2) -> None:
         """Show details of a single step or parallel group."""

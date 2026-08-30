@@ -48,6 +48,112 @@ def _pattern_steps(pipelines: dict[str, Any], group: str, name: str) -> list:
     return matches[0][1]
 
 
+def collect_targets(config: dict[str, Any]) -> list[str]:
+    """Collect available pipeline targets from a loaded config."""
+    targets: list[str] = []
+    pipelines = config.get("pipelines", {})
+    if not isinstance(pipelines, dict):
+        return targets
+
+    if "default" in pipelines:
+        targets.append("default")
+
+    branches = pipelines.get("branches", {})
+    if isinstance(branches, dict):
+        for branch in sorted(branches.keys()):
+            targets.append(f"branches.{branch}")
+
+    tags = pipelines.get("tags", {})
+    if isinstance(tags, dict):
+        for tag in sorted(tags.keys()):
+            targets.append(f"tags.{tag}")
+
+    for name in sorted(pipelines.keys()):
+        if name in ("default", "branches", "tags"):
+            continue
+        if name == "custom" and isinstance(pipelines.get("custom"), dict):
+            for custom_name in sorted(pipelines["custom"].keys()):
+                targets.append(f"custom.{custom_name}")
+        elif name == "pull-requests" and isinstance(pipelines.get("pull-requests"), dict):
+            for pr_name in sorted(pipelines["pull-requests"].keys()):
+                targets.append(f"pull-requests.{pr_name}")
+        else:
+            targets.append(name)
+
+    return targets
+
+
+def resolve_auto_target(config: dict[str, Any], git_branch_name: str | None) -> str:
+    """
+    Pick a target when the user omits ``--target``.
+
+    Order: matching ``branches.<git-branch>``, then ``default``, then
+    ``pull-requests.**``, then the first listed target.
+    """
+    pipelines = config.get("pipelines", {})
+    if not isinstance(pipelines, dict):
+        return "default"
+
+    if git_branch_name:
+        branch_target = f"branches.{git_branch_name}"
+        if get_steps_for_target(config, branch_target):
+            return branch_target
+
+    if "default" in pipelines:
+        return "default"
+
+    pull_requests = pipelines.get("pull-requests")
+    if isinstance(pull_requests, dict):
+        if "**" in pull_requests:
+            return "pull-requests.**"
+        if pull_requests:
+            first = next(iter(pull_requests))
+            return f"pull-requests.{first}"
+
+    targets = collect_targets(config)
+    return targets[0] if targets else "default"
+
+
+def filter_pipeline_items(
+    items: list[Any], names: list[str] | None
+) -> list[Any]:
+    """Keep only steps whose ``name`` is in *names*. Empty *names* keeps all."""
+    if not names:
+        return items
+    wanted = set(names)
+    out: list[Any] = []
+    for item in items:
+        if isinstance(item, dict) and "parallel" in item:
+            raw, _fail_fast = parse_parallel_block(item["parallel"])
+            kept = [
+                child
+                for child in raw
+                if unwrap_step_item(child).get("name") in wanted
+            ]
+            if not kept:
+                continue
+            if isinstance(item["parallel"], dict):
+                new_block = dict(item["parallel"])
+                new_block["steps"] = kept
+                out.append({"parallel": new_block})
+            else:
+                out.append({"parallel": kept})
+            continue
+        step = unwrap_step_item(item)
+        if step.get("name") in wanted:
+            out.append(item)
+    return out
+
+
+def after_script_key(step: dict[str, Any]) -> str | None:
+    """Return the after-script key present on *step*, if any."""
+    if "after-script" in step:
+        return "after-script"
+    if "after_script" in step:
+        return "after_script"
+    return None
+
+
 def get_steps_for_target(config: dict[str, Any], target: str) -> list:
     """Return pipeline steps for a target, including Bitbucket-style wildcard keys."""
     pipelines = config.get("pipelines", {})
@@ -132,12 +238,15 @@ def run_parallel_group(
     spawn: Callable[[int, dict], subprocess.Popen | None],
     wait: Callable[[subprocess.Popen], int] = lambda p: p.wait(),
     terminate: Callable[[subprocess.Popen], None] = lambda p: p.terminate(),
+    finalize: Callable[[int, dict, int], int] | None = None,
 ) -> tuple[bool, list[bool]]:
     """
     Run unwrapped parallel child steps concurrently.
 
     spawn(index, step_dict) returns Popen or None (skip / no process).
     On fail-fast, other running processes are terminated.
+    finalize(index, step, script_rc) may run after-script and return the
+    combined exit code.
 
     Returns (all_succeeded, per_index_success).
     """
@@ -195,6 +304,9 @@ def run_parallel_group(
         finally:
             with lock:
                 active[i] = None
+
+        if finalize is not None:
+            rc = finalize(i, step, rc)
 
         results[i] = rc == 0
         if not results[i] and abort_siblings_on_step_failure(step, group_fail_fast):

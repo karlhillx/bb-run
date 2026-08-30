@@ -42,15 +42,21 @@ class HostRunner(BaseRunner):
         return cmd
 
     def _host_spawn_step(
-        self, step: dict, env: dict, label: str
+        self,
+        step: dict,
+        env: dict,
+        label: str,
+        script_key: str = "script",
     ) -> subprocess.Popen | None:
         """Start a host shell step; return Popen or None if nothing to run."""
-        if "script" in step:
-            script = step["script"]
+        script = step.get(script_key)
+        if script:
             commands = script if isinstance(script, list) else [script]
             parts = [self._translate_command(c) for c in commands]
             full = " && ".join(parts)
-            print(f"{label}$ {full[:200]}{'...' if len(full) > 200 else ''}")
+            shown = full if self.verbose else full[:200]
+            suffix = "" if self.verbose or len(full) <= 200 else "..."
+            print(f"{label}$ {shown}{suffix}")
             return subprocess.Popen(
                 full,
                 shell=True,
@@ -58,17 +64,21 @@ class HostRunner(BaseRunner):
                 env=env,
                 start_new_session=True,
             )
-        if "pipe" in step:
+        if script_key == "script" and "pipe" in step:
             print(f"{label}⚠️  Pipe: {step.get('pipe', '')}")
             print(f"{label}    (pipes not executed in host mode)")
             return None
-        print(f"{label}Warning: Step has no script or pipe")
+        print(f"{label}Warning: Step has no {script_key} or pipe")
         return None
 
     def _spawn_step(
-        self, step: dict, env: dict, label: str
+        self,
+        step: dict,
+        env: dict,
+        label: str,
+        script_key: str = "script",
     ) -> subprocess.Popen | None:
-        return self._host_spawn_step(step, env, label)
+        return self._host_spawn_step(step, env, label, script_key=script_key)
 
     def _terminate_proc(self, proc: subprocess.Popen) -> None:
         """Terminate the step's whole process group, falling back to the child."""

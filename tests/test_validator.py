@@ -4,6 +4,7 @@ Tests for PipelineValidator
 
 import pytest
 import yaml
+
 from bbrun.validator import PipelineValidator
 
 
@@ -93,6 +94,27 @@ def test_validator_validate_missing_pipelines_key(temp_repo):
     
     validator = PipelineValidator(temp_repo)
     assert validator.validate() is False
+
+
+def test_validator_show_summary_includes_pr_and_custom(temp_repo, capsys):
+    config = {
+        "image": "python:3.11",
+        "pipelines": {
+            "custom": {"deploy": [{"step": {"name": "deploy", "script": ["echo d"]}}]},
+            "pull-requests": {"**": [{"step": {"name": "pr", "script": ["echo p"]}}]},
+        },
+    }
+    pipeline_file = temp_repo / "bitbucket-pipelines.yml"
+    with open(pipeline_file, "w") as f:
+        yaml.dump(config, f)
+    validator = PipelineValidator(temp_repo)
+    assert validator.validate() is True
+    validator.show_summary()
+    out = capsys.readouterr().out
+    assert "custom" in out
+    assert "deploy" in out
+    assert "pull-requests" in out
+    assert "pr" in out
 
 
 def test_validator_invalid_yaml(temp_repo):

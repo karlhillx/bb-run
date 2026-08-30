@@ -16,11 +16,12 @@ def test_docker_runner_run_step_script(tmp_path, monkeypatch):
         def wait(self):
             return 0
 
-    def fake_spawn(step_arg, default_image_arg, env_arg, label=""):
+    def fake_spawn(step_arg, default_image_arg, env_arg, label="", script_key="script"):
         recorded["step"] = step_arg
         recorded["default_image"] = default_image_arg
         recorded["env"] = env_arg
         recorded["label"] = label
+        recorded["script_key"] = script_key
         return DummyProc()
 
     monkeypatch.setattr(runner, "_docker_spawn_step", fake_spawn)
@@ -32,6 +33,21 @@ def test_docker_runner_run_step_script(tmp_path, monkeypatch):
     assert recorded["default_image"] == "python:3.11"
     assert recorded["env"]["FOO"] == "bar"
     assert recorded["label"] == ""
+
+
+def test_docker_env_does_not_leak_host_askpass(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "GIT_ASKPASS",
+        "/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass.sh",
+    )
+    monkeypatch.setenv("PATH", "/opt/homebrew/bin:/usr/bin")
+    runner = DockerRunner(tmp_path)
+    env = runner._build_env("master")
+    assert "GIT_ASKPASS" not in env
+    assert env.get("PATH") is None
+    assert env["CI"] == "true"
+    assert env["HOME"] == "/root"
+    assert env["BITBUCKET_CLONE_DIR"] == "/opt/atlassian/pipelines/agent/build"
 
 
 def test_docker_runner_run_step_pipe(tmp_path, monkeypatch):

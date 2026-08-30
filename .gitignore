@@ -1,108 +1,47 @@
-# Canonical Python project .gitignore for Jacobs repos
-# Source of truth: lynx-devops/templates/python.gitignore
-# Sync: scripts/sync-gitignore.sh
-
-# Python bytecode and cache
+# Bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions / native binaries
-*.so
-*.dll
-*.dylib
-
-# Distribution / packaging
-.Python
-build/
-dist*/
-site/
-wheels/
-*.egg*
-.eggs/
-.installed.cfg
-sdist/
-pip-wheel-metadata/
-__pypackages__/
-*.whl
-*.manifest
-*.spec
-
 # Virtual environments
 .venv/
 venv/
-env/
-.conda*/
 
-# Environment files
-.env*
+# Packaging / install
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+__pypackages__/
+
+# Secrets and local overrides
+.env
+.env.*
 !.env.example
 *.local
 
-# Test / coverage / type / lint caches and reports
-.coverage*
-.cache/
-.hypothesis/
-.mypy_cache/
-.nox/
+# Test, coverage, lint, type-check
 .pytest_cache/
 .ruff_cache/
-.tox/
-cover/
-coverage.xml
+.coverage
+.coverage.*
 htmlcov/
-junit*.xml
-TEST*.xml
+coverage.xml
 
-# Test output directories
-tests/data/output/
-integration_tests/output_files/
-**/Output_Files/
+# bb-run local artifacts and caches
+.bb-run/
 
-# Jupyter
-.ipynb_checkpoints/
-
-# SBOM artifacts
-sbom/
-
-# Docker
-docker-support/
-.dockerignore
-docker-compose.override.yml
-
-# Logs / runtime files
-*.log
-logs/
-
-# Databases
-*.sqlite*
-*.db
-
-# Node / Yarn artifacts (mixed-stack repos)
-node_modules/
-.npm
-.pnp.*
-.yarn/*
-
-# Binary packages / archives
-*.app
-*.exe
-*.zip
-
-# IDE / editor configs
-.vscode/
+# Editor / OS
 .idea/
-*.sw[a-p]
-
-# OS-generated files
+.vscode/
+*.swp
+*~
 .DS_Store
 Thumbs.db
 
-# Temporary / backup files
-~$*
+# Logs and scratch files
+*.log
 *.tmp
 *.bak
-*.wbk
-*~
-# Project-specific additions for bb-run
-.bb-run/

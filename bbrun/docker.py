@@ -13,6 +13,19 @@ from .runner import BaseRunner
 CONTAINER_BUILD_DIR = "/opt/atlassian/pipelines/agent/build"
 
 
+def docker_daemon_available() -> bool:
+    """True if the Docker CLI can reach a daemon."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
 @functools.lru_cache(maxsize=1)
 def _docker_pull_supports_progress_flag() -> bool:
     """True if this Docker CLI accepts ``docker pull --progress``."""
@@ -42,6 +55,10 @@ class DockerRunner(BaseRunner):
     def _clone_dir(self) -> str:
         return CONTAINER_BUILD_DIR
 
+    def _base_env(self) -> dict[str, str]:
+        """Do not leak host PATH, GIT_ASKPASS, or Cursor helpers into the image."""
+        return {}
+
     def _extra_env(self) -> dict[str, str]:
         return {"HOME": "/root"}
 
@@ -52,7 +69,7 @@ class DockerRunner(BaseRunner):
     def _preflight(self) -> bool:
         if not self._docker_available():
             print("Error: Docker is not available")
-            print("Use --mode host to run on your host machine instead")
+            print("Use --mode host, or omit --mode to auto-fall back to host")
             return False
         return True
 
@@ -60,15 +77,7 @@ class DockerRunner(BaseRunner):
 
     def _docker_available(self) -> bool:
         """Check if the Docker daemon is reachable."""
-        try:
-            result = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                timeout=10,
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
+        return docker_daemon_available()
 
     def _image_exists(self, image: str) -> bool:
         """Check if a Docker image is present locally."""
@@ -118,7 +127,12 @@ class DockerRunner(BaseRunner):
     # -- step spawning ----------------------------------------------------
 
     def _docker_spawn_step(
-        self, step: dict, default_image: str, env: dict, label: str
+        self,
+        step: dict,
+        default_image: str,
+        env: dict,
+        label: str,
+        script_key: str = "script",
     ) -> subprocess.Popen | None:
         """Start a Docker-backed step; return Popen or None if nothing to run."""
         image = step.get("image", default_image)
@@ -136,27 +150,36 @@ class DockerRunner(BaseRunner):
             "-v",
             f"{self.repo_path}:{CONTAINER_BUILD_DIR}:rw",
         ]
+        docker_cmd.extend(self._docker_extra_args)
         for key, value in env.items():
             docker_cmd.extend(["-e", f"{key}={value}"])
         docker_cmd.append(image)
 
-        if "script" in step:
-            script = step["script"]
+        script = step.get(script_key)
+        if script:
             bash_cmd = " && ".join(script) if isinstance(script, list) else script
             docker_cmd.extend(["/bin/bash", "-c", bash_cmd])
             print(f"{label}Executing: {bash_cmd[:60]}...")
+            if self.verbose:
+                print(f"{label}docker: {' '.join(docker_cmd)}")
             return subprocess.Popen(docker_cmd, cwd=self.repo_path, env=env)
-        if "pipe" in step:
+        if script_key == "script" and "pipe" in step:
             print(f"{label}Pipe: {step['pipe']}")
             print(f"{label}Note: Pipes are not executed in Docker mode (simplified)")
             return None
-        print(f"{label}Warning: Step has no script or pipe")
+        print(f"{label}Warning: Step has no {script_key} or pipe")
         return None
 
     def _spawn_step(
-        self, step: dict, env: dict, label: str
+        self,
+        step: dict,
+        env: dict,
+        label: str,
+        script_key: str = "script",
     ) -> subprocess.Popen | None:
-        return self._docker_spawn_step(step, self.default_image, env, label)
+        return self._docker_spawn_step(
+            step, self.default_image, env, label, script_key=script_key
+        )
 
     def _run_step(
         self, step: dict, step_name: str, default_image: str, env: dict
