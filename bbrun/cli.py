@@ -524,7 +524,7 @@ Examples:
         and "daemon is not running" in mode_reason.lower()
         and not args.json
     ):
-        ui.warn(mode_reason, persist=True)
+        ui.warn(mode_reason)
         ui.note(
             "Start Docker Desktop or OrbStack, then re-run. "
             "Pass --mode docker to require containers.",
