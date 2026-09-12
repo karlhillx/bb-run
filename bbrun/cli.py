@@ -3,16 +3,21 @@
 bb-run CLI - Bitbucket Pipelines Local Runner
 """
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import json
+import os
 import sys
+import traceback
 from pathlib import Path
 
-from . import __version__
 from .caches import step_cache_names
 from .discover import git_branch, resolve_repo_path
-from .docker import DockerRunner, docker_daemon_available
+from .docker import DockerRunner, docker_daemon_status
+from .doctor import inspect_environment, print_doctor
+from .envfile import EnvFileError, parse_env_file
 from .host import HostRunner
 from .pipeline import (
     after_script_key,
@@ -24,34 +29,30 @@ from .pipeline import (
     unwrap_step_item,
 )
 from .services import resolve_service_specs
+from .ui import configure_ui, get_ui
 from .validator import PipelineValidator
+from .version import __version__
 
 
 def list_targets(repo_path: Path, json_output: bool = False) -> int:
     """List available pipeline targets."""
-    pipeline_file = repo_path / "bitbucket-pipelines.yml"
-    if not pipeline_file.exists():
-        if json_output:
-            print(json.dumps({"error": f"bitbucket-pipelines.yml not found in {repo_path}"}))
-        else:
-            print(f"Error: bitbucket-pipelines.yml not found in {repo_path}")
-        return 1
-
+    ui = get_ui()
     validator = PipelineValidator(repo_path)
     config = validator.load()
 
     if not config:
         if json_output:
-            print(json.dumps({"error": "bitbucket-pipelines.yml not found or invalid"}))
+            print(json.dumps({"error": validator.last_error or "invalid pipeline"}))
         else:
-            print("Error: Could not read or parse bitbucket-pipelines.yml")
+            ui.error(validator.last_error or "Could not read or parse bitbucket-pipelines.yml")
         return 1
 
     if "pipelines" not in config:
+        msg = "Missing 'pipelines' key in bitbucket-pipelines.yml"
         if json_output:
-            print(json.dumps({"error": "Missing 'pipelines' key in bitbucket-pipelines.yml"}))
+            print(json.dumps({"error": msg}))
         else:
-            print("Error: Missing 'pipelines' key in bitbucket-pipelines.yml")
+            ui.error(msg)
         return 1
 
     targets = collect_targets(config)
@@ -61,11 +62,11 @@ def list_targets(repo_path: Path, json_output: bool = False) -> int:
         print(json.dumps({"targets": targets, "default_image": image}))
         return 0
 
-    print("Available pipeline targets:")
+    ui.info("Available pipeline targets:")
     for target in targets:
-        print(f"  {target}")
+        ui.info(f"  {target}")
 
-    print(f"\nDefault image: {image}")
+    ui.info(f"\nDefault image: {image}")
     return 0
 
 
@@ -120,25 +121,21 @@ def _step_plan(items: list, config: dict) -> list[dict]:
 def choose_target(config: dict, repo_path: Path, target: str | None) -> str:
     if target:
         return target
-    chosen = resolve_auto_target(config, git_branch(repo_path))
-    return chosen
+    return resolve_auto_target(config, git_branch(repo_path))
 
 
-def resolve_mode(mode: str, *, quiet: bool) -> tuple[str, str]:
+def resolve_mode(mode: str) -> tuple[str, str]:
     """Return ``(mode, reason)``. *mode* is ``auto``, ``docker``, or ``host``."""
     if mode == "docker":
-        return "docker", "forced"
+        return "docker", ""
     if mode == "host":
-        return "host", "forced"
-    if docker_daemon_available():
-        reason = "Docker daemon is available"
-        if not quiet:
-            print(f"Mode: auto → docker ({reason})")
-        return "docker", reason
-    reason = "Docker not available; using host"
-    if not quiet:
-        print(f"Mode: auto → host ({reason})")
-    return "host", reason
+        return "host", ""
+    ok, detail = docker_daemon_status()
+    if ok:
+        return "docker", "Docker daemon is available"
+    if detail == "docker CLI not found":
+        return "host", "Docker not available; using host"
+    return "host", f"{detail}; using host"
 
 
 def dry_run(
@@ -149,15 +146,26 @@ def dry_run(
     json_output: bool = False,
     step_names: list[str] | None = None,
     mode_reason: str = "",
+    target_reason: str = "",
 ) -> int:
     """Show the selected pipeline plan without executing steps."""
+    ui = get_ui()
     validator = PipelineValidator(repo_path)
     config = validator.load()
     if not config or "pipelines" not in config:
         if json_output:
-            print(json.dumps({"error": "bitbucket-pipelines.yml not found or invalid"}))
+            print(
+                json.dumps(
+                    {
+                        "error": validator.last_error
+                        or "bitbucket-pipelines.yml not found or invalid"
+                    }
+                )
+            )
         else:
-            print("Error: Could not read or parse bitbucket-pipelines.yml")
+            ui.error(
+                validator.last_error or "Could not read or parse bitbucket-pipelines.yml"
+            )
         return 1
 
     steps = get_steps_for_target(config, target)
@@ -167,10 +175,10 @@ def dry_run(
             print(json.dumps({"error": f"No steps found for target: {target}"}))
         else:
             if step_names:
-                print(f"No steps matched: {', '.join(step_names)}")
+                ui.error(f"No steps matched: {', '.join(step_names)}")
             else:
-                print(f"No steps found for target: {target}")
-            print("Hint: bb-run --list-targets")
+                ui.error(f"No steps found for target: {target}")
+            ui.note("List names with: bb-run --list-targets", persist=True)
         return 1
 
     plan = _step_plan(steps, config)
@@ -179,6 +187,7 @@ def dry_run(
             json.dumps(
                 {
                     "target": target,
+                    "target_reason": target_reason,
                     "branch": branch,
                     "mode": mode,
                     "mode_reason": mode_reason,
@@ -189,17 +198,22 @@ def dry_run(
         )
         return 0
 
-    print("Dry run — no commands executed")
-    print(f"Repository: {repo_path}")
-    print(f"Target: {target}")
-    print(f"Branch: {branch}")
-    print(f"Mode: {mode.upper()}")
-    print(f"Image: {config.get('image', 'atlassian/default-image:latest')}")
-    print("\nPlan:")
+    ui.title(f"bb-run {__version__}")
+    ui.note("Dry run — nothing will be executed.")
+    ui.blank()
+    ui.kv("Repository", str(repo_path))
+    target_value = f"{target}  ({target_reason})" if target_reason else target
+    ui.kv("Target", target_value)
+    ui.kv("Branch", branch)
+    mode_value = f"{mode}  ({mode_reason})" if mode_reason else mode
+    ui.kv("Mode", mode_value)
+    ui.kv("Image", str(config.get("image", "atlassian/default-image:latest")))
+    ui.blank()
+    ui.info("Plan:")
     for entry in plan:
         if entry["type"] == "parallel":
             note = "fail-fast" if entry["fail_fast"] else "no fail-fast"
-            print(f"  {entry['index']}. parallel ({len(entry['steps'])} steps, {note})")
+            ui.info(f"  {entry['index']}. parallel ({len(entry['steps'])} steps, {note})")
             for child in entry["steps"]:
                 _print_plan_step(child, indent=6)
         else:
@@ -208,6 +222,7 @@ def dry_run(
 
 
 def _print_plan_step(entry: dict, indent: int) -> None:
+    ui = get_ui()
     prefix = " " * indent
     extras = []
     if entry.get("services"):
@@ -215,15 +230,15 @@ def _print_plan_step(entry: dict, indent: int) -> None:
     if entry.get("caches"):
         extras.append("caches=" + ",".join(entry["caches"]))
     extra = f" ({'; '.join(extras)})" if extras else ""
-    print(f"{prefix}{entry['index']}. {entry['name']}{extra}")
+    ui.info(f"{prefix}{entry['index']}. {entry['name']}{extra}")
     for line in entry.get("script") or []:
         shown = line if len(line) <= 70 else line[:67] + "..."
-        print(f"{prefix}   $ {shown}")
+        ui.info(f"{prefix}   $ {shown}")
     if entry.get("after_script"):
-        print(f"{prefix}   after-script:")
+        ui.info(f"{prefix}   after-script:")
         for line in entry["after_script"]:
             shown = line if len(line) <= 70 else line[:67] + "..."
-            print(f"{prefix}     $ {shown}")
+            ui.info(f"{prefix}     $ {shown}")
 
 
 def run_pipeline(
@@ -237,6 +252,8 @@ def run_pipeline(
     step_names: list[str] | None,
     enable_services: bool,
     enable_caches: bool,
+    target_reason: str,
+    mode_reason: str,
 ) -> int:
     """Run a pipeline in the specified mode."""
     runner = DockerRunner(repo_path) if mode == "docker" else HostRunner(repo_path)
@@ -250,6 +267,8 @@ def run_pipeline(
         step_names=step_names,
         enable_services=enable_services,
         enable_caches=enable_caches,
+        target_reason=target_reason,
+        mode_reason=mode_reason,
     )
 
     return 0 if success else 1
@@ -263,23 +282,59 @@ def validate(repo_path: Path, json_output: bool = False) -> int:
         if json_output:
             config = validator.config or {}
             image = config.get("image", "atlassian/default-image:latest")
-            print(json.dumps({
-                "valid": True,
-                "default_image": image,
-                "targets": collect_targets(config),
-            }))
+            print(
+                json.dumps(
+                    {
+                        "valid": True,
+                        "default_image": image,
+                        "targets": collect_targets(config),
+                    }
+                )
+            )
             return 0
 
-        print("✅ Valid bitbucket-pipelines.yml")
+        get_ui().success("Valid bitbucket-pipelines.yml")
         validator.show_summary()
         return 0
 
     if json_output:
-        print(json.dumps({"valid": False}))
+        print(json.dumps({"valid": False, "error": validator.last_error}))
         return 1
 
-    print("❌ Invalid or missing bitbucket-pipelines.yml")
     return 1
+
+
+def _default_mode() -> str:
+    raw = os.environ.get("BB_RUN_MODE", "auto").strip().lower()
+    if raw in {"auto", "docker", "host"}:
+        return raw
+    return "auto"
+
+
+def _load_variables(
+    env_files: list[str] | None, cli_vars: list[str] | None
+) -> dict[str, str] | int:
+    """Merge env files then ``-v`` flags. Returns a dict or an exit code."""
+    ui = get_ui()
+    variables: dict[str, str] = {}
+    for raw_path in env_files or []:
+        path = Path(raw_path).expanduser()
+        try:
+            variables.update(parse_env_file(path))
+        except EnvFileError as exc:
+            ui.error(str(exc))
+            return 1
+    if cli_vars:
+        for var in cli_vars:
+            if "=" not in var:
+                ui.error(f"Invalid variable {var!r}. Expected KEY=VALUE.")
+                return 2
+            key, value = var.split("=", 1)
+            if not key:
+                ui.error(f"Invalid variable {var!r}. Key cannot be empty.")
+                return 2
+            variables[key] = value
+    return variables
 
 
 def _cli_dispatch() -> int:
@@ -291,17 +346,16 @@ def _cli_dispatch() -> int:
 Examples:
   uvx bb-run                                # zero-install; auto target + mode
   bb-run                                    # Run the resolved pipeline
+  bb-run --doctor                           # Check Docker, YAML, and auto target
   bb-run --target branches.main            # Run main branch pipeline
   bb-run --repo /path/to/repo              # Run in specific repo
   bb-run --branch feature-x                # Simulate running on a branch
   bb-run --mode host                       # Run on host (no Docker)
   bb-run --mode docker                     # Run in Docker
   bb-run --step "Unit tests"               # Run only named steps
-  bb-run -v KEY=VALUE                      # Pass variables
+  bb-run --env-file .env -v KEY=VALUE      # Pass variables
   bb-run --list-targets                    # List available targets
   bb-run --validate                        # Validate YAML only
-  bb-run --list-targets --json             # List targets as JSON
-  bb-run --validate --json                 # Validate as JSON
   bb-run --dry-run                         # Show selected steps without executing
   python3 -m bbrun --version               # If bb-run is not on PATH
         """,
@@ -336,8 +390,9 @@ Examples:
         "--mode",
         "-m",
         choices=["auto", "docker", "host"],
-        default="auto",
-        help="Execution mode (default: auto — Docker if the daemon is up, else host)",
+        default=_default_mode(),
+        help="Execution mode (default: auto — Docker if the daemon is up, else host; "
+        "override with BB_RUN_MODE)",
     )
     parser.add_argument(
         "--step",
@@ -364,9 +419,15 @@ Examples:
         help="Variables in KEY=VALUE format",
     )
     parser.add_argument(
+        "--env-file",
+        action="append",
+        metavar="PATH",
+        help="Load KEY=VALUE pairs from a file (repeatable; -v wins)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
-        help="Output JSON for --list-targets, --validate, or --dry-run",
+        help="Output JSON for --list-targets, --validate, --dry-run, or --doctor",
     )
     parser.add_argument(
         "--list-targets",
@@ -375,8 +436,15 @@ Examples:
     )
     parser.add_argument(
         "--validate",
+        "--check",
         action="store_true",
+        dest="validate",
         help="Validate YAML only, do not run",
+    )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Check Python, Docker, and the pipeline file, then exit",
     )
     parser.add_argument(
         "--dry-run",
@@ -384,9 +452,21 @@ Examples:
         help="Show the selected target plan without executing steps",
     )
     parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Less bb-run chatter (step output is unchanged)",
+    )
+    parser.add_argument(
+        "--color",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Color output (default: auto; also NO_COLOR / FORCE_COLOR)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print resolved target/branch/tag, extra -v values, and docker argv",
+        help="Print extra -v keys (secrets redacted) and docker argv",
     )
     parser.add_argument(
         "--version",
@@ -396,31 +476,37 @@ Examples:
 
     args = parser.parse_args()
 
-    if args.json and not (args.list_targets or args.validate or args.dry_run):
-        print("Error: --json is only supported with --list-targets, --validate, or --dry-run")
+    json_ok = args.list_targets or args.validate or args.dry_run or args.doctor
+    color = "never" if args.json else args.color
+    inspect = json_ok
+    quiet = bool(args.json or (args.quiet and not inspect))
+    configure_ui(color=color, quiet=quiet)
+    ui = get_ui()
+
+    if args.json and not json_ok:
+        ui.error(
+            "--json is only supported with --list-targets, --validate, --dry-run, or --doctor"
+        )
         return 2
+
+    env_mode = os.environ.get("BB_RUN_MODE", "").strip().lower()
+    if env_mode and env_mode not in {"auto", "docker", "host"}:
+        ui.warn(f"Ignoring invalid BB_RUN_MODE={env_mode!r} (use auto, docker, or host)")
 
     try:
         repo_path = resolve_repo_path(args.repo)
     except OSError as e:
-        print(f"Error: Could not resolve path {args.repo!r}: {e}", file=sys.stderr)
+        ui.error(f"Could not resolve path {args.repo!r}: {e}")
         return 1
 
     if not repo_path.is_dir():
-        print(f"Error: Not a directory: {repo_path}", file=sys.stderr)
+        ui.error(f"Not a directory: {repo_path}")
         return 1
 
-    variables = {}
-    if args.variables:
-        for var in args.variables:
-            if "=" not in var:
-                print(f"Error: Invalid variable '{var}'. Expected KEY=VALUE.")
-                return 2
-            key, value = var.split("=", 1)
-            if not key:
-                print(f"Error: Invalid variable '{var}'. Key cannot be empty.")
-                return 2
-            variables[key] = value
+    loaded = _load_variables(args.env_file, args.variables)
+    if isinstance(loaded, int):
+        return loaded
+    variables = loaded
 
     if args.list_targets:
         return list_targets(repo_path, json_output=args.json)
@@ -428,26 +514,49 @@ Examples:
     if args.validate:
         return validate(repo_path, json_output=args.json)
 
-    quiet_mode = args.json
-    mode, mode_reason = resolve_mode(args.mode, quiet=quiet_mode)
+    if args.doctor:
+        return print_doctor(inspect_environment(repo_path), json_output=args.json)
+
+    mode, mode_reason = resolve_mode(args.mode)
+    if (
+        args.mode == "auto"
+        and mode == "host"
+        and "daemon is not running" in mode_reason.lower()
+        and not args.json
+    ):
+        ui.warn(mode_reason, persist=True)
+        ui.note(
+            "Start Docker Desktop or OrbStack, then re-run. "
+            "Pass --mode docker to require containers.",
+            persist=True,
+        )
 
     validator = PipelineValidator(repo_path)
     config = validator.load()
     if not config or "pipelines" not in config:
         if args.dry_run and args.json:
-            print(json.dumps({"error": "bitbucket-pipelines.yml not found or invalid"}))
+            print(
+                json.dumps(
+                    {
+                        "error": validator.last_error
+                        or "bitbucket-pipelines.yml not found or invalid"
+                    }
+                )
+            )
             return 1
-        pipeline_file = repo_path / "bitbucket-pipelines.yml"
-        if not pipeline_file.exists():
-            print(f"Error: bitbucket-pipelines.yml not found in {repo_path}")
-            print("Tip: run from your repository root, or pass --repo /path/to/repo")
+        if validator.last_error:
+            ui.error(validator.last_error)
+            if "not found" in validator.last_error:
+                ui.note(
+                    "Run from your repository root, or pass --repo /path/to/repo",
+                    persist=True,
+                )
             return 1
-        print("Error: Could not read or parse bitbucket-pipelines.yml")
+        ui.error("Could not read or parse bitbucket-pipelines.yml")
         return 1
 
     target = choose_target(config, repo_path, args.target)
-    if args.target is None and not args.json:
-        print(f"Target: auto → {target}")
+    target_reason = "" if args.target else "auto"
 
     if args.dry_run:
         return dry_run(
@@ -458,6 +567,7 @@ Examples:
             json_output=args.json,
             step_names=args.steps,
             mode_reason=mode_reason,
+            target_reason=target_reason,
         )
 
     return run_pipeline(
@@ -471,6 +581,8 @@ Examples:
         step_names=args.steps,
         enable_services=not args.no_services,
         enable_caches=not args.no_cache,
+        target_reason=target_reason,
+        mode_reason=mode_reason,
     )
 
 
@@ -489,8 +601,24 @@ def main() -> int:
     try:
         return _cli_dispatch()
     except KeyboardInterrupt:
-        print("\nInterrupted.", file=sys.stderr)
+        get_ui().error("Interrupted.")
         return 130
+    except BrokenPipeError:
+        with contextlib.suppress(OSError):
+            sys.stdout.close()
+        return 0
+    except Exception as exc:
+        ui = get_ui()
+        ui.error("bb-run hit an unexpected error.")
+        ui.error(f"{type(exc).__name__}: {exc}")
+        if "--verbose" in sys.argv or os.environ.get("BB_RUN_DEBUG"):
+            traceback.print_exc()
+        else:
+            ui.note(
+                "Re-run with --verbose or BB_RUN_DEBUG=1 for a traceback.",
+                persist=True,
+            )
+        return 1
 
 
 if __name__ == "__main__":

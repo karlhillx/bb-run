@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from .runner import BaseRunner
+from .ui import get_ui
 
 
 class HostRunner(BaseRunner):
@@ -20,9 +21,8 @@ class HostRunner(BaseRunner):
     def __init__(self, repo_path: Path | str) -> None:
         super().__init__(repo_path)
 
-    def _print_mode_lines(self, image: str) -> None:
-        print("Mode: HOST (runs on your machine)")
-        print(f"Note: Uses '{image}' as reference for command mapping")
+    def _mode_summary(self, image: str) -> tuple[str, str]:
+        return "host", "runs on your machine"
 
     def _translate_command(self, cmd: str) -> str:
         """Adapt common Bitbucket image commands to a host environment."""
@@ -37,7 +37,7 @@ class HostRunner(BaseRunner):
         # Add --break-system-packages for PEP 668.
         if "pip3 install" in cmd and "--break-system-packages" not in cmd:
             cmd = cmd.replace("pip3 install", "pip3 install --break-system-packages")
-            print("  (added --break-system-packages for PEP 668)")
+            get_ui().note("added --break-system-packages for PEP 668")
 
         return cmd
 
@@ -56,7 +56,7 @@ class HostRunner(BaseRunner):
             full = " && ".join(parts)
             shown = full if self.verbose else full[:200]
             suffix = "" if self.verbose or len(full) <= 200 else "..."
-            print(f"{label}$ {shown}{suffix}")
+            get_ui().info(f"{label}$ {shown}{suffix}")
             return subprocess.Popen(
                 full,
                 shell=True,
@@ -65,10 +65,9 @@ class HostRunner(BaseRunner):
                 start_new_session=True,
             )
         if script_key == "script" and "pipe" in step:
-            print(f"{label}⚠️  Pipe: {step.get('pipe', '')}")
-            print(f"{label}    (pipes not executed in host mode)")
+            get_ui().warn(f"{label}Pipe: {step.get('pipe', '')} (not executed in host mode)")
             return None
-        print(f"{label}Warning: Step has no {script_key} or pipe")
+        get_ui().warn(f"{label}Step has no {script_key} or pipe")
         return None
 
     def _spawn_step(

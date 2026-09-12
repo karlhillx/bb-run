@@ -13,6 +13,7 @@ from concurrent.futures import wait as futures_wait
 from typing import Any
 
 from .errors import explain_process_launch_error
+from .ui import get_ui
 
 
 def unwrap_step_item(item: Any) -> dict:
@@ -112,6 +113,18 @@ def resolve_auto_target(config: dict[str, Any], git_branch_name: str | None) -> 
 
     targets = collect_targets(config)
     return targets[0] if targets else "default"
+
+
+def count_executable_steps(items: list[Any]) -> int:
+    """Count sequential steps plus children inside ``parallel:`` groups."""
+    n = 0
+    for item in items:
+        if isinstance(item, dict) and "parallel" in item:
+            raw, _fail_fast = parse_parallel_block(item["parallel"])
+            n += len(raw)
+        else:
+            n += 1
+    return n
 
 
 def filter_pipeline_items(
@@ -284,8 +297,8 @@ def run_parallel_group(
                 if isinstance(step, dict)
                 else f"step {i + 1}"
             )
-            print(
-                f"❌ Could not start parallel step {label!r}: "
+            get_ui().error(
+                f"Could not start parallel step {label!r}: "
                 f"{explain_process_launch_error(e)}"
             )
             if abort_siblings_on_step_failure(step, group_fail_fast):

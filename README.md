@@ -15,6 +15,7 @@
 - **Two modes** - Docker for an environment closer to Bitbucket; host mode needs **no Docker** for script-only steps (service sidecars still need Docker)
 - **Parallel steps** - `parallel:` groups run concurrently; group and per-step `fail-fast` stop sibling processes when a failing step demands it
 - **Services and caches** - Sidecars (e.g. RabbitMQ) and `definitions.caches` so integration steps can pass locally
+- **Clear local output** - Step `1/N` banners, timings, and a one-line pass/fail summary; `bb-run --doctor` checks your machine first
 - **Small install** - One runtime dependency: **PyYAML** (see `pyproject.toml`). Docker is only required for `--mode docker` and for steps that declare `services:`
 
 ## Installation
@@ -78,7 +79,7 @@ uv run python -m bbrun --version
 ## Using bb-run reliably
 
 - From a subdirectory, `bb-run` (default `--repo .`) **walks up** to the nearest `bitbucket-pipelines.yml`. An explicit `--repo /path` is used as-is and is not walked.
-- Prefer **`bb-run --validate`** first; it checks the file without Docker. `--mode auto` (the default) uses Docker when `docker info` succeeds, otherwise **host**.
+- Prefer **`bb-run --doctor`** then **`bb-run --validate`**; doctor checks Docker, YAML, and the auto target without running scripts. `--mode auto` (the default) uses Docker when `docker info` succeeds, otherwise **host**.
 - On macOS/Linux where `pip install` is restricted (PEP 668), prefer **`uvx`**, **`uv tool`**, **`pipx`**, or a venv.
 
 ### uv-style pipelines (no `default`)
@@ -88,19 +89,30 @@ Many uv + Bitbucket templates only define `pull-requests.**` and `branches.maste
 ```bash
 cd /path/to/that/repo
 uvx bb-run                          # auto target + auto mode
+uvx bb-run --mode docker            # require containers (no host fallback)
 uvx bb-run --step "Unit tests"      # one named step
 uvx bb-run --dry-run --json         # plan only
 ```
 
-`--target` is chosen from the current git branch when that pipeline exists. `BITBUCKET_BRANCH` is still `LOCAL` unless you pass `--branch`. Integration steps that declare `services:` need a Docker daemon even in host mode. Private git extras (for example an `unclass` extra) need credentials available to the step; Docker mode does **not** copy host `GIT_ASKPASS` / `PATH` into the container.
+`--target` is chosen from the current git branch when that pipeline exists. `BITBUCKET_BRANCH` is still `LOCAL` unless you pass `--branch`. Integration steps that declare `services:` need a Docker daemon even in host mode. Private git dependencies need credentials available to the step; Docker mode does **not** copy host `GIT_ASKPASS` / `PATH` into the container.
 
 ## Quick Start
+
+### Check your machine
+
+```bash
+cd /path/to/your/repo   # where bitbucket-pipelines.yml lives
+bb-run --doctor
+```
+
+`--doctor` reports Python, the pipeline file, Docker (including whether the CLI is missing or the daemon is stopped), the mode bb-run would use, and the auto-selected target. It does not run scripts. `--doctor --json` includes `docker_detail`.
 
 ### Validate a pipeline (instant)
 
 ```bash
 cd /path/to/your/repo   # where bitbucket-pipelines.yml lives
 bb-run --validate
+bb-run --check          # alias for --validate
 ```
 
 ### Run the resolved pipeline
@@ -110,6 +122,30 @@ bb-run
 ```
 
 With no `--target`, the CLI picks `branches.<current-git-branch>` when that resolves to steps, otherwise `default`, otherwise `pull-requests.**` (or the first `pull-requests` key), otherwise the first listed target. This auto-select is CLI-only; `HostRunner.run()` / `DockerRunner.run()` still default to `target="default"`.
+
+A typical run looks like this:
+
+```
+bb-run 1.3.0
+
+  Repository  /path/to/your/repo
+  Target      default  (auto)
+  Mode        host  (Docker daemon is not running; using host)
+  Branch      LOCAL
+  Plan        2 steps
+
+Step 1/2  Unit tests
+$ pytest -q
+ok  Unit tests  (1.2s)
+
+Step 2/2  Lint
+$ ruff check .
+ok  Lint  (0.4s)
+
+ok  Pipeline passed  ·  2 steps  ·  1.6s
+```
+
+Color and `✓` / `✗` are used on an interactive terminal. `NO_COLOR=1` or `--color never` keeps plain ASCII. `--quiet` hides bb-run banners and keeps step output plus the final summary.
 
 ### Run a specific branch
 
@@ -142,7 +178,11 @@ bb-run --mode host
 
 ```bash
 bb-run -v ENVIRONMENT=staging -v API_KEY=secret
+bb-run --env-file .env
+bb-run --env-file .env -v ENVIRONMENT=staging   # -v wins
 ```
+
+`--env-file` reads dotenv-style `KEY=VALUE` lines (`#` comments and `export ` are allowed). `--verbose` prints extra variable **keys**; values that look like secrets (`API_KEY`, `TOKEN`, `PASSWORD`, …) are shown as `***`.
 
 ### List available targets
 
@@ -188,7 +228,7 @@ For `branches.*`, `tags.*`, and `pull-requests.*`, bb-run first tries an exact k
 
 ### Auto (default)
 
-Uses Docker when `docker info` succeeds; otherwise host. Pass `--mode docker` or `--mode host` to force a mode.
+Uses Docker when `docker info` succeeds; otherwise host. Pass **`--mode docker`** to require containers (fails if the daemon is down) or **`--mode host`** to skip Docker.
 
 ### Docker Mode
 
@@ -201,7 +241,7 @@ bb-run --mode docker
 **Pros:** Closer to Bitbucket (image `PATH`, per-step `image:`)  
 **Cons:** Requires Docker; images may take time to download
 
-The container does not inherit your host environment. Only Bitbucket variables, `HOME=/root`, and `-v KEY=VALUE` are passed in. That keeps macOS `PATH` / `GIT_ASKPASS` out of the Linux image.
+The container does not inherit your host environment. Only Bitbucket variables, `HOME=/root`, `--env-file` / `-v KEY=VALUE`, and (on macOS/Windows) `core.filemode=false` are passed in. That keeps macOS `PATH` / `GIT_ASKPASS` out of the Linux image, and stops Docker Desktop bind-mounts from making every file look executable to pre-commit.
 
 ### Host Mode
 
@@ -257,7 +297,7 @@ Service steps need a working Docker daemon even in `--mode host`.
 
 ## Caches
 
-Step `caches:` entries use Bitbucket predefined names (`pip`, `node`, `yarn`, …) plus `definitions.caches` path maps (`uv: ~/.cache/uv`). Snapshots live under **`.bb-run/caches/`** in the repo (gitignored). Host mode copies to/from the declared path; Docker mode bind-mounts the store. Use **`--no-cache`** to skip.
+Step `caches:` entries use Bitbucket predefined names (`pip`, `node`, `yarn`, …) plus `definitions.caches` path maps (`uv: ~/.cache/uv`). Snapshots live under **`.bb-run/caches/`** in the repo (gitignored). Host mode uses home-directory caches in place and still snapshots repo-relative paths such as `node_modules`. Docker mode bind-mounts a separate tree at **`.bb-run/caches/docker/`** so tools like pre-commit do not see macOS paths inside the Linux container. Use **`--no-cache`** to skip.
 
 ## Artifacts
 
@@ -297,7 +337,12 @@ bb-run --target branches.main
 bb-run --verbose
 ```
 
-`--verbose` prints the resolved target, branch, tag, extra `-v` values, and any `--step` filter. Host mode then prints the full joined script (normally truncated). Docker mode prints the `docker run` argv. Services and caches already print during a normal run.
+`--verbose` prints extra `-v` / `--env-file` keys (secret-looking values redacted) and any `--step` filter. Host mode then prints the full joined script (normally truncated). Docker mode prints the `docker run` argv. Services and caches already print during a normal run.
+
+```bash
+bb-run --quiet              # banners off; step output and the final summary stay
+bb-run --color never        # no ANSI colors
+```
 
 ## Configuration
 
@@ -307,7 +352,7 @@ With the default `--repo .`, bb-run uses `bitbucket-pipelines.yml` in the curren
 bb-run --repo /path/to/repo
 ```
 
-`--json` is only valid with `--list-targets`, `--validate`, or `--dry-run`.
+`--json` is only valid with `--list-targets`, `--validate`, `--dry-run`, or `--doctor`.
 
 ## Exit Codes
 
@@ -342,7 +387,7 @@ ok = HostRunner(repo).run(
 raise SystemExit(0 if ok else 1)
 ```
 
-`DockerRunner` and `HostRunner` share `BaseRunner` and the same `run(...)` signature (returns `True` on success). Optional kwargs: `tag`, `step_names`, `enable_services`, `enable_caches`, `verbose`.
+`DockerRunner` and `HostRunner` share `BaseRunner` and the same `run(...)` signature (returns `True` on success). Optional kwargs: `tag`, `step_names`, `enable_services`, `enable_caches`, `verbose`, `target_reason`, `mode_reason`.
 
 ## Supported vs Unsupported Bitbucket Features
 
@@ -384,6 +429,15 @@ uv run ty check
 
 ## Environment Variables
 
+bb-run itself reads:
+
+| Variable | Description |
+|----------|-------------|
+| `BB_RUN_MODE` | Default `--mode` (`auto`, `docker`, or `host`) |
+| `NO_COLOR` | Disable color when `--color auto` |
+| `FORCE_COLOR` | Enable color when `--color auto` even if stdout is not a TTY |
+| `BB_RUN_DEBUG` | Print a traceback on unexpected errors (same as `--verbose` for crashes) |
+
 bb-run sets these Bitbucket-specific environment variables:
 
 | Variable | Description |
@@ -423,17 +477,18 @@ Repos without a `default` pipeline are normal; bb-run will use `pull-requests.**
 
 ### "Docker is not available"
 
-Omit `--mode` to auto-fall back to host, or force it:
+`--mode auto` (the default) uses the host when the CLI is missing **or** the daemon is stopped. Start Docker Desktop / OrbStack, then:
 
 ```bash
-bb-run --mode host
+bb-run --mode docker    # require containers; do not fall back to host
+bb-run --mode host      # scripts on this machine
 ```
 
-Steps that declare `services:` still need Docker unless you pass `--no-services`.
+Steps that declare `services:` still need Docker unless you pass `--no-services`. `bb-run --doctor` prints the specific reason (`docker CLI not found` vs `Docker daemon is not running`).
 
 ### "step requires services but Docker is not available"
 
-Start Docker Desktop / the daemon, or skip sidecars with `--no-services` (integration tests that expect RabbitMQ will then fail).
+Start Docker Desktop / the daemon, or skip sidecars with `--no-services` (integration tests that expect RabbitMQ will then fail). `bb-run --doctor` shows whether Docker is reachable.
 
 ### `uvx: command not found`
 
@@ -452,9 +507,33 @@ uv sync
 uv run pytest --cov=bbrun --cov-report=xml tests/
 ```
 
-### Private git extras fail in Docker (`unimq`, `unclass`, …)
+### Permission denied under `~/.cache/uv`
 
-Docker mode does not forward host git helpers. Use `--mode host` so the step sees your existing credentials, or arrange HTTPS/SSH auth inside the image.
+Host mode does **not** copy `~/.cache/uv` (or other home-directory caches) in and out of `.bb-run/caches/` — it uses the live host cache as-is. uv marks git pack files read-only, so overlaying that tree used to crash. Repo-relative caches such as `node_modules` are still snapshotted. Use `--no-cache` to skip cache handling entirely.
+
+### `InvalidManifestError` / `.pre-commit-hooks.yaml is not a file` (Docker)
+
+pre-commit’s cache database stores **absolute** clone paths. A snapshot taken on the host (`/Users/…/.cache/pre-commit/…`) is not valid inside the Linux container (`/root/.cache/pre-commit`). bb-run keeps Docker caches under `.bb-run/caches/docker/` and resets a layer whose `db.db` still has host paths. Use `--mode host` if you want the live Mac cache, or `--no-cache` to skip restore.
+
+### Run stayed on the host instead of Docker
+
+`--mode auto` (the default) uses Docker only when `docker info` can reach a daemon. If Docker Desktop or OrbStack is installed but **not running**, bb-run falls back to host. Start the engine, then:
+
+```bash
+bb-run --mode docker
+```
+
+`--mode docker` fails instead of silently using the host. `bb-run --doctor` shows whether the daemon is reachable.
+
+### `check-executables-have-shebangs` fails in Docker on a Mac
+
+Docker Desktop bind-mounts report every file as executable to `os.access()` even when `ls` shows `644`. pre-commit then wants a shebang on `README.md`, `.py` files, and so on. Host mode is fine because macOS modes are real.
+
+bb-run sets `core.filemode=false` in the container so git uses the index (`100644` vs `100755`), matching Bitbucket. Re-run with `--mode docker`.
+
+### Private git dependencies fail in Docker
+
+Docker mode does not forward host git helpers (`GIT_ASKPASS`, SSH agent extras on `PATH`, and similar). Use `--mode host` so the step sees your existing credentials, or arrange HTTPS/SSH auth inside the image.
 
 ### Image pull failures
 
@@ -463,6 +542,22 @@ Registry rate limits or a missing tag may cause image downloads to fail. Try:
 2. Using `--mode host` temporarily
 3. Updating the pipeline `image:` tag if it is stale
 4. Configuring a Docker mirror
+
+### `docker-credential-desktop` / "error getting credentials"
+
+The Docker daemon is up, but `docker pull` cannot run the helper named in `~/.docker/config.json`. This is common on a Mac that used Docker Desktop and now uses OrbStack: `credsStore` is still `"desktop"`.
+
+bb-run retries the pull without stored credentials (enough for public GHCR images). To fix it for good:
+
+```bash
+# Option A — run on the host instead of pulling the Bitbucket image
+bb-run --mode host
+
+# Option B — stop asking Docker Desktop for credentials (OrbStack)
+# Edit ~/.docker/config.json and remove the "credsStore" line, or set it to "".
+```
+
+`bb-run --doctor` warns when that helper is configured but not on `PATH`.
 
 ## License
 

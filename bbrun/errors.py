@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import os
 
+from .ui import get_ui
+
 
 def explain_process_launch_error(exc: BaseException) -> str:
     """Turn errors from subprocess.Popen (or pull failures) into short, actionable text."""
@@ -44,13 +46,15 @@ def report_step_script_failure(
     step_name: str, exit_code: int, *, docker: bool
 ) -> None:
     """Print context after a pipeline script exits non-zero."""
-    print(f"❌ Step {step_name!r} failed (exit code {exit_code}).")
-    print("   Scroll up for output from your pipeline script.")
+    ui = get_ui()
+    ui.error(f"Step {step_name!r} failed (exit code {exit_code}).")
+    ui.note("Scroll up for output from your pipeline script.", persist=True)
     if docker:
-        print(
-            "   In Docker mode the repo is mounted at "
+        ui.note(
+            "In Docker mode the repo is mounted at "
             "/opt/atlassian/pipelines/agent/build. "
             "“No such file or directory” for .venv or binaries usually means "
             "that path is not created yet in this step—run setup first in the "
-            "same script block."
+            "same script block.",
+            persist=True,
         )

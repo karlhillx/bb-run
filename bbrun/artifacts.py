@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .ui import get_ui
+
 # Sentinel: restore all shared layers from prior steps (public for tests / introspection)
 DOWNLOAD_ALL_PRIOR_SHARED = object()
 
@@ -252,30 +254,28 @@ class ArtifactSession:
         self.repo = repo_path.resolve()
         run_id = f"run_{os.getpid()}_{uuid.uuid4().hex[:8]}"
         self.base = self.repo / ".bb-run" / "artifacts" / run_id
-        self.base.mkdir(parents=True, exist_ok=True)
         self.shared_layers: list[SharedLayer] = []
         self._layer_seq = 0
 
     def prepare_for_step(self, step: dict[str, Any]) -> None:
         """Restore prior shared artifacts before the step runs."""
+        ui = get_ui()
         rule = parse_download_rule(step)
         if rule is False:
-            print("📥 Artifacts: skipping restore (artifacts.download: false)")
+            ui.info("Artifacts: skipping restore (artifacts.download: false)")
             return
         if rule is DOWNLOAD_ALL_PRIOR_SHARED:
             for layer in self.shared_layers:
                 merge_layer_into_repo(layer.root, self.repo)
             if self.shared_layers:
-                print(
-                    f"📥 Artifacts: restored {len(self.shared_layers)} shared layer(s)"
+                ui.info(
+                    f"Artifacts: restored {len(self.shared_layers)} shared layer(s)"
                 )
             return
         if isinstance(rule, list):
             wanted = set(rule)
             if not wanted:
-                print(
-                    "📥 Artifacts: selective download list empty — nothing restored"
-                )
+                ui.info("Artifacts: selective download list empty — nothing restored")
                 return
             merged = 0
             for layer in self.shared_layers:
@@ -288,13 +288,14 @@ class ArtifactSession:
                         merge_layer_into_repo(layer.root, self.repo)
                         merged += 1
             if merged:
-                print(
-                    f"📥 Artifacts: restored {merged} layer(s) (selective download)"
+                ui.info(
+                    f"Artifacts: restored {merged} layer(s) (selective download)"
                 )
             return
 
     def capture_after_step(self, step: dict[str, Any], step_ok: bool) -> None:
         """Capture declared artifacts after a step finishes."""
+        ui = get_ui()
         for spec in iter_upload_specs(step):
             if not should_capture(spec.capture_on, step_ok):
                 continue
@@ -303,7 +304,7 @@ class ArtifactSession:
             )
             if not files:
                 label = spec.name or "paths"
-                print(f"📦 Artifacts: nothing matched for [{label}]")
+                ui.info(f"Artifacts: nothing matched for [{label}]")
                 continue
 
             self._layer_seq += 1
@@ -313,17 +314,17 @@ class ArtifactSession:
             if spec.type == "shared":
                 self.shared_layers.append(SharedLayer(name=spec.name, root=layer_root))
                 tag = spec.name or "shared"
-                print(f"📦 Artifacts: saved [{tag}] ({n} file(s)) for later steps")
+                ui.info(f"Artifacts: saved [{tag}] ({n} file(s)) for later steps")
             elif spec.type == "scoped":
                 scoped_dir = self.base / "scoped" / (spec.name or f"layer_{self._layer_seq}")
                 shutil.copytree(layer_root, scoped_dir, dirs_exist_ok=True)
                 label = spec.name or "unnamed"
-                print(
-                    f"📦 Artifacts: saved scoped [{label}] ({n} file(s), not passed on)"
+                ui.info(
+                    f"Artifacts: saved scoped [{label}] ({n} file(s), not passed on)"
                 )
             elif spec.type == "test-reports":
                 tr_dir = self.base / "test-reports" / (spec.name or f"layer_{self._layer_seq}")
                 shutil.copytree(layer_root, tr_dir, dirs_exist_ok=True)
-                print(
-                    f"📦 Artifacts: saved test-reports [{spec.name or 'unnamed'}] ({n} file(s))"
+                ui.info(
+                    f"Artifacts: saved test-reports [{spec.name or 'unnamed'}] ({n} file(s))"
                 )

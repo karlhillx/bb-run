@@ -7,6 +7,7 @@ import yaml
 from bbrun.host import HostRunner
 from bbrun.pipeline import (
     abort_siblings_on_step_failure,
+    count_executable_steps,
     parallel_failure_summaries,
     parse_parallel_block,
     unwrap_step_item,
@@ -39,6 +40,21 @@ def test_parse_parallel_list_form():
 def test_unwrap_step_item():
     inner = {"name": "t", "script": ["true"]}
     assert unwrap_step_item({"step": inner}) == inner
+
+
+def test_count_executable_steps_includes_parallel_children():
+    items = [
+        {"step": {"name": "one", "script": ["true"]}},
+        {
+            "parallel": {
+                "steps": [
+                    {"step": {"name": "a", "script": ["true"]}},
+                    {"step": {"name": "b", "script": ["true"]}},
+                ]
+            }
+        },
+    ]
+    assert count_executable_steps(items) == 3
 
 
 def test_parallel_failure_summaries():

@@ -21,4 +21,5 @@ uv run pytest tests/
 uv run ruff check bbrun tests
 uv run ty check
 uv run python -m bbrun --version
+uv run python -m bbrun --doctor
 ```

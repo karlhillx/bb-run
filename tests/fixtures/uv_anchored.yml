@@ -1,4 +1,4 @@
-# Portable Python + uv CI (test fixture; mirrors Jacobs-family pipelines).
+# Portable Python + uv CI fixture: YAML anchors, no default pipeline, caches + services.
 image: ghcr.io/astral-sh/uv:0.12-python3.12-trixie
 
 options:

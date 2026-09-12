@@ -9,6 +9,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ui import get_ui
+
+
+def _docker_env() -> dict[str, str]:
+    from .docker import docker_cli_env
+
+    return docker_cli_env()
+
 
 @dataclass
 class ServiceSpec:
@@ -33,15 +41,15 @@ def resolve_service_specs(config: dict[str, Any], step: dict[str, Any]) -> list[
     for raw_name in raw_names:
         name = str(raw_name)
         if name == "docker":
-            print("Note: built-in 'docker' service is not started locally")
+            get_ui().note("built-in 'docker' service is not started locally")
             continue
         entry = defs.get(name)
         if not isinstance(entry, dict):
-            print(f"Warning: unknown service {name!r} (not in definitions.services)")
+            get_ui().warn(f"unknown service {name!r} (not in definitions.services)")
             continue
         image = entry.get("image")
         if not image:
-            print(f"Warning: service {name!r} has no image")
+            get_ui().warn(f"service {name!r} has no image")
             continue
         variables = entry.get("variables") or {}
         if not isinstance(variables, dict):
@@ -71,6 +79,7 @@ def image_exposed_ports(image: str) -> list[int]:
             capture_output=True,
             text=True,
             timeout=15,
+            env=_docker_env(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -103,16 +112,17 @@ def wait_tcp(host: str, port: int, timeout: float = 30.0) -> bool:
 
 
 def _ensure_image(image: str) -> bool:
+    from .docker import docker_cli_env, pull_docker_image
+
     inspect = subprocess.run(
         ["docker", "image", "inspect", image],
         capture_output=True,
         timeout=15,
+        env=docker_cli_env(),
     )
     if inspect.returncode == 0:
         return True
-    print(f"Pulling service image: {image}", flush=True)
-    pull = subprocess.run(["docker", "pull", image], timeout=600)
-    return pull.returncode == 0
+    return pull_docker_image(image)
 
 
 class ServiceSession:
@@ -136,15 +146,16 @@ class ServiceSession:
         """Start sidecars. Returns False if the step cannot run."""
         if not specs:
             return True
+        ui = get_ui()
         if not self.enabled:
-            print("🔌 Services: skipped (--no-services)")
+            ui.info("Services: skipped (--no-services)")
             return True
         from .docker import docker_daemon_available
 
         if not docker_daemon_available():
             names = ", ".join(s.name for s in specs)
-            print(f"Error: step requires services ({names}) but Docker is not available")
-            print("Install Docker or pass --no-services")
+            ui.error(f"step requires services ({names}) but Docker is not available")
+            ui.note("Install Docker or pass --no-services", persist=True)
             return False
 
         if self.docker_mode and not self._ensure_network():
@@ -163,6 +174,7 @@ class ServiceSession:
                 ["docker", "rm", "-f", name],
                 capture_output=True,
                 timeout=30,
+                env=_docker_env(),
             )
         self._containers.clear()
         if self._network_created:
@@ -170,6 +182,7 @@ class ServiceSession:
                 ["docker", "network", "rm", self.network],
                 capture_output=True,
                 timeout=15,
+                env=_docker_env(),
             )
             self._network_created = False
 
@@ -187,18 +200,21 @@ class ServiceSession:
             capture_output=True,
             text=True,
             timeout=15,
+            env=_docker_env(),
         )
         if result.returncode != 0:
-            print(f"Error: could not create Docker network {self.network}")
+            ui = get_ui()
+            ui.error(f"could not create Docker network {self.network}")
             if result.stderr:
-                print(result.stderr.strip())
+                ui.note(result.stderr.strip(), persist=True)
             return False
         self._network_created = True
         return True
 
     def _start_one(self, spec: ServiceSpec) -> bool:
+        ui = get_ui()
         if not _ensure_image(spec.image):
-            print(f"Error: failed to pull service image {spec.image}")
+            ui.error(f"failed to pull service image {spec.image}")
             return False
 
         ports = image_exposed_ports(spec.image)
@@ -214,24 +230,29 @@ class ServiceSession:
             cmd.extend(["-e", f"{key}={value}"])
         cmd.append(spec.image)
 
-        print(f"🔌 Service: starting {spec.name} ({spec.image})", flush=True)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        ui.info(f"Service: starting {spec.name} ({spec.image})", persist=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=120, env=_docker_env()
+        )
         if result.returncode != 0:
-            print(f"Error: could not start service {spec.name!r}")
+            ui.error(f"could not start service {spec.name!r}")
             err = (result.stderr or result.stdout or "").strip()
             if err:
-                print(err)
+                ui.note(err, persist=True)
             return False
 
         self._containers.append(container)
         for port in ports:
             if not wait_tcp("127.0.0.1", port, timeout=45.0):
-                print(
-                    f"Error: service {spec.name!r} did not accept connections "
+                ui.error(
+                    f"service {spec.name!r} did not accept connections "
                     f"on 127.0.0.1:{port}"
                 )
                 return False
-            print(f"🔌 Service: {spec.name} ready on 127.0.0.1:{port}")
+            ui.info(f"Service: {spec.name} ready on 127.0.0.1:{port}", persist=True)
         if not ports:
-            print(f"🔌 Service: {spec.name} started (no EXPOSE ports to wait on)")
+            ui.info(
+                f"Service: {spec.name} started (no EXPOSE ports to wait on)",
+                persist=True,
+            )
         return True

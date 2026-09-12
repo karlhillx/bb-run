@@ -3,27 +3,136 @@
 from __future__ import annotations
 
 import functools
+import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .runner import BaseRunner
+from .ui import get_ui
 
 CONTAINER_BUILD_DIR = "/opt/atlassian/pipelines/agent/build"
 
+_HELPER_DIRS = (
+    Path("/Applications/Docker.app/Contents/Resources/bin"),
+    Path("/Applications/OrbStack.app/Contents/MacOS"),
+    Path.home() / ".orbstack" / "bin",
+    Path("/opt/homebrew/bin"),
+    Path("/usr/local/bin"),
+)
 
-def docker_daemon_available() -> bool:
-    """True if the Docker CLI can reach a daemon."""
+
+def apply_docker_git_filemode(env: dict[str, str], *, platform: str = sys.platform) -> None:
+    """
+    Make git (and pre-commit) trust the index executable bit.
+
+    Docker Desktop bind-mounts keep ``stat`` modes (644) but ``os.access(X_OK)``
+    as root returns True for every file. ``check-executables-have-shebangs``
+    then fails on ordinary sources. Linux hosts are left alone.
+    """
+    if platform == "linux":
+        return
+    count = 0
+    raw = env.get("GIT_CONFIG_COUNT", "")
+    if raw.isdigit():
+        count = int(raw)
+    for index in range(count):
+        key = env.get(f"GIT_CONFIG_KEY_{index}", "").lower()
+        if key == "core.filemode":
+            env[f"GIT_CONFIG_VALUE_{index}"] = "false"
+            return
+    env[f"GIT_CONFIG_KEY_{count}"] = "core.filemode"
+    env[f"GIT_CONFIG_VALUE_{count}"] = "false"
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+
+
+def docker_cli_env(*, anonymous_config: Path | None = None) -> dict[str, str]:
+    """Host env for the Docker CLI (not the container)."""
+    env = os.environ.copy()
+    extras = [str(path) for path in _HELPER_DIRS if path.is_dir()]
+    if extras:
+        env["PATH"] = os.pathsep.join([*extras, env.get("PATH", "")])
+    if anonymous_config is not None:
+        env["DOCKER_CONFIG"] = str(anonymous_config)
+    return env
+
+
+def docker_config_dir() -> Path:
+    raw = os.environ.get("DOCKER_CONFIG")
+    if raw:
+        return Path(raw)
+    return Path.home() / ".docker"
+
+
+def configured_credential_helpers() -> list[str]:
+    """``docker-credential-*`` names from ``config.json`` (credsStore / credHelpers)."""
+    config_file = docker_config_dir() / "config.json"
+    try:
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    names: list[str] = []
+    store = data.get("credsStore")
+    if isinstance(store, str) and store.strip():
+        names.append(f"docker-credential-{store.strip()}")
+    helpers = data.get("credHelpers")
+    if isinstance(helpers, dict):
+        for value in helpers.values():
+            if isinstance(value, str) and value.strip():
+                names.append(f"docker-credential-{value.strip()}")
+    return list(dict.fromkeys(names))
+
+
+def missing_docker_credential_helper() -> str | None:
+    """Return a configured helper that is not on PATH, if any."""
+    path = docker_cli_env().get("PATH", "")
+    for name in configured_credential_helpers():
+        if shutil.which(name, path=path) is None:
+            return name
+    return None
+
+
+_DAEMON_DOWN_MARKERS = (
+    "cannot connect to the docker daemon",
+    "is the docker daemon running",
+    "failed to connect to the docker api",
+    "error during connect",
+)
+
+
+def docker_daemon_status() -> tuple[bool, str]:
+    """Return ``(reachable, human detail)`` for the current Docker context."""
+    env = docker_cli_env()
+    if shutil.which("docker", path=env.get("PATH", "")) is None:
+        return False, "docker CLI not found"
     try:
         result = subprocess.run(
             ["docker", "info"],
             capture_output=True,
             timeout=10,
+            text=True,
+            env=env,
         )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
+    except subprocess.TimeoutExpired:
+        return False, "docker info timed out"
+    except (FileNotFoundError, OSError):
+        return False, "docker CLI not found"
+    if result.returncode == 0:
+        return True, "Docker daemon is available"
+    text = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    if any(marker in text for marker in _DAEMON_DOWN_MARKERS):
+        return False, "Docker daemon is not running"
+    return False, "Docker daemon is not running"
+
+
+def docker_daemon_available() -> bool:
+    """True if the Docker CLI can reach a daemon."""
+    return docker_daemon_status()[0]
 
 
 @functools.lru_cache(maxsize=1)
@@ -35,11 +144,71 @@ def _docker_pull_supports_progress_flag() -> bool:
             capture_output=True,
             text=True,
             timeout=8,
+            env=docker_cli_env(),
         )
         combined = (r.stdout or "") + (r.stderr or "")
         return r.returncode == 0 and "--progress" in combined
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _run_docker_pull(image: str, env: dict[str, str]) -> int:
+    """Stream ``docker pull`` and return its exit code."""
+    interactive = sys.stderr.isatty()
+    cmd = ["docker", "pull"]
+    if _docker_pull_supports_progress_flag():
+        cmd.extend(["--progress", "tty" if interactive else "plain"])
+    cmd.append(image)
+    pull_env = dict(env)
+    if interactive:
+        pull_env.pop("CI", None)
+    proc = subprocess.Popen(cmd, env=pull_env)
+    while proc.poll() is None:
+        try:
+            proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            get_ui().note(
+                "still pulling (large images can take several minutes)",
+                persist=True,
+            )
+    return proc.returncode or 0
+
+
+def pull_docker_image(image: str) -> bool:
+    """Pull *image*, retrying without a broken credential helper if needed."""
+    ui = get_ui()
+    ui.info(f"Pulling Docker image: {image}", persist=True)
+    if sys.stderr.isatty():
+        ui.note(
+            "Each layer can take a while; lines update when a layer completes.",
+            persist=True,
+        )
+
+    rc = _run_docker_pull(image, docker_cli_env())
+    if rc == 0:
+        return True
+
+    helper = missing_docker_credential_helper()
+    if helper:
+        ui.warn(
+            f"{helper} is not on PATH. ~/.docker/config.json likely still "
+            "points at Docker Desktop (common with OrbStack)."
+        )
+        ui.note("Retrying the pull without stored registry credentials…", persist=True)
+        with tempfile.TemporaryDirectory(prefix="bb-run-docker-") as tmp:
+            Path(tmp, "config.json").write_text("{}\n", encoding="utf-8")
+            rc = _run_docker_pull(image, docker_cli_env(anonymous_config=Path(tmp)))
+        if rc == 0:
+            ui.note(
+                "Pulled with an anonymous Docker config. Public images are fine. "
+                'To silence this, remove "credsStore" from ~/.docker/config.json.',
+                persist=True,
+            )
+            return True
+
+    ui.error(f"Failed to pull image: {image}")
+    ui.note("Use --mode host to run scripts on your machine instead.", persist=True)
+    return False
 
 
 class DockerRunner(BaseRunner):
@@ -62,67 +231,36 @@ class DockerRunner(BaseRunner):
     def _extra_env(self) -> dict[str, str]:
         return {"HOME": "/root"}
 
-    def _print_mode_lines(self, image: str) -> None:
-        print("Mode: DOCKER")
-        print(f"Image: {image}")
+    def _mode_summary(self, image: str) -> tuple[str, str]:
+        return "docker", ""
 
     def _preflight(self) -> bool:
-        if not self._docker_available():
-            print("Error: Docker is not available")
-            print("Use --mode host, or omit --mode to auto-fall back to host")
-            return False
-        return True
+        ok, detail = docker_daemon_status()
+        if ok:
+            return True
+        ui = get_ui()
+        ui.error("Docker is not available")
+        ui.note(detail, persist=True)
+        ui.note(
+            "Start Docker Desktop or OrbStack, then retry --mode docker. "
+            "Use --mode host to run on this machine instead.",
+            persist=True,
+        )
+        return False
 
     # -- docker helpers ---------------------------------------------------
-
-    def _docker_available(self) -> bool:
-        """Check if the Docker daemon is reachable."""
-        return docker_daemon_available()
 
     def _image_exists(self, image: str) -> bool:
         """Check if a Docker image is present locally."""
         result = subprocess.run(
             ["docker", "image", "inspect", image],
             capture_output=True,
+            env=docker_cli_env(),
         )
         return result.returncode == 0
 
     def _pull_image(self, image: str) -> bool:
-        """Pull a Docker image, streaming Docker's own progress to the terminal."""
-        print(f"Pulling Docker image: {image}", flush=True)
-        interactive = sys.stderr.isatty()
-        if interactive:
-            print(
-                "Tip: each fs layer can take a while; lines update when a layer completes.",
-                flush=True,
-            )
-
-        cmd = ["docker", "pull"]
-        if _docker_pull_supports_progress_flag():
-            # tty: animated bars on a real terminal; plain: steady line-based output.
-            cmd.extend(["--progress", "tty" if interactive else "plain"])
-        cmd.append(image)
-
-        env = os.environ.copy()
-        if interactive:
-            # Editors/CI often set CI=1, which makes Docker suppress TTY progress.
-            env.pop("CI", None)
-
-        proc = subprocess.Popen(cmd, env=env)
-        # Heartbeat: plain progress can look "stuck" for minutes on large layers.
-        while proc.poll() is None:
-            try:
-                proc.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                print(
-                    "  … still pulling (large images can take several minutes)",
-                    flush=True,
-                )
-
-        ok = proc.returncode == 0
-        if not ok:
-            print(f"Failed to pull image: {image}")
-        return ok
+        return pull_docker_image(image)
 
     # -- step spawning ----------------------------------------------------
 
@@ -135,9 +273,10 @@ class DockerRunner(BaseRunner):
         script_key: str = "script",
     ) -> subprocess.Popen | None:
         """Start a Docker-backed step; return Popen or None if nothing to run."""
+        ui = get_ui()
         image = step.get("image", default_image)
         if not self._image_exists(image):
-            print(f"Image not found locally: {image}")
+            ui.info(f"Image not found locally: {image}", persist=True)
             if not self._pull_image(image):
                 raise RuntimeError(f"docker pull failed: {image}")
 
@@ -151,7 +290,9 @@ class DockerRunner(BaseRunner):
             f"{self.repo_path}:{CONTAINER_BUILD_DIR}:rw",
         ]
         docker_cmd.extend(self._docker_extra_args)
-        for key, value in env.items():
+        container_env = dict(env)
+        apply_docker_git_filemode(container_env)
+        for key, value in container_env.items():
             docker_cmd.extend(["-e", f"{key}={value}"])
         docker_cmd.append(image)
 
@@ -159,15 +300,16 @@ class DockerRunner(BaseRunner):
         if script:
             bash_cmd = " && ".join(script) if isinstance(script, list) else script
             docker_cmd.extend(["/bin/bash", "-c", bash_cmd])
-            print(f"{label}Executing: {bash_cmd[:60]}...")
+            ui.info(f"{label}$ {bash_cmd[:60]}...")
             if self.verbose:
-                print(f"{label}docker: {' '.join(docker_cmd)}")
-            return subprocess.Popen(docker_cmd, cwd=self.repo_path, env=env)
+                ui.note(f"{label}docker: {' '.join(docker_cmd)}")
+            return subprocess.Popen(
+                docker_cmd, cwd=self.repo_path, env=docker_cli_env()
+            )
         if script_key == "script" and "pipe" in step:
-            print(f"{label}Pipe: {step['pipe']}")
-            print(f"{label}Note: Pipes are not executed in Docker mode (simplified)")
+            ui.warn(f"{label}Pipe: {step['pipe']} (not executed in Docker mode)")
             return None
-        print(f"{label}Warning: Step has no {script_key} or pipe")
+        ui.warn(f"{label}Step has no {script_key} or pipe")
         return None
 
     def _spawn_step(

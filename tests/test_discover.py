@@ -82,8 +82,8 @@ def test_git_origin_urls_empty_without_git(tmp_path: Path) -> None:
     assert ssh == ""
 
 
-def test_jacobs_shaped_yaml_anchors_load() -> None:
-    fixture = Path(__file__).parent / "fixtures" / "jacobs_shaped.yml"
+def test_uv_anchored_yaml_anchors_load() -> None:
+    fixture = Path(__file__).parent / "fixtures" / "uv_anchored.yml"
     config = yaml.safe_load(fixture.read_text(encoding="utf-8"))
     assert resolve_auto_target(config, None) == "pull-requests.**"
     assert resolve_auto_target(config, "master") == "branches.master"

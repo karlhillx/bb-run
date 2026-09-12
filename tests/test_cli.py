@@ -87,7 +87,7 @@ def test_cli_rejects_invalid_variable(monkeypatch, capsys):
     captured = capsys.readouterr()
 
     assert exit_code == 2
-    assert "Expected KEY=VALUE" in captured.out
+    assert "Expected KEY=VALUE" in captured.err
 
 
 def test_cli_rejects_empty_variable_key(monkeypatch, capsys):
@@ -97,7 +97,7 @@ def test_cli_rejects_empty_variable_key(monkeypatch, capsys):
     captured = capsys.readouterr()
 
     assert exit_code == 2
-    assert "Key cannot be empty" in captured.out
+    assert "Key cannot be empty" in captured.err
 
 
 def test_cli_dry_run_text(tmp_path, monkeypatch, capsys):
@@ -232,7 +232,10 @@ def test_cli_mode_auto_without_docker(tmp_path, monkeypatch, capsys):
         }
     }
     _write_pipeline(tmp_path, config)
-    monkeypatch.setattr("bbrun.cli.docker_daemon_available", lambda: False)
+    monkeypatch.setattr(
+        "bbrun.cli.docker_daemon_status",
+        lambda: (False, "docker CLI not found"),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -245,8 +248,18 @@ def test_cli_mode_auto_without_docker(tmp_path, monkeypatch, capsys):
     assert "host" in data["mode_reason"].lower()
 
 
-def test_cli_jacobs_shaped_dry_run(tmp_path, monkeypatch, capsys):
-    fixture = Path(__file__).parent / "fixtures" / "jacobs_shaped.yml"
+def test_resolve_mode_auto_when_daemon_stopped(monkeypatch):
+    monkeypatch.setattr(
+        "bbrun.cli.docker_daemon_status",
+        lambda: (False, "Docker daemon is not running"),
+    )
+    mode, reason = cli.resolve_mode("auto")
+    assert mode == "host"
+    assert reason == "Docker daemon is not running; using host"
+
+
+def test_cli_uv_anchored_dry_run(tmp_path, monkeypatch, capsys):
+    fixture = Path(__file__).parent / "fixtures" / "uv_anchored.yml"
     (tmp_path / "bitbucket-pipelines.yml").write_text(
         fixture.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -279,3 +292,149 @@ def test_cli_jacobs_shaped_dry_run(tmp_path, monkeypatch, capsys):
     quality = [s for s in data["steps"][0]["steps"] if s["name"] == "Code quality"][0]
     assert quality["after_script"] == ['echo "quality done"']
     assert "pre-commit" in quality["caches"]
+
+
+def test_cli_run_host_success(tmp_path, monkeypatch, capsys):
+    config = {
+        "pipelines": {
+            "default": [{"step": {"name": "hello", "script": ["echo hello"]}}],
+        }
+    }
+    _write_pipeline(tmp_path, config)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--mode", "host"],
+    )
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Pipeline passed" in captured.out
+    assert "Step 1/1" in captured.out
+    assert "hello" in captured.out
+
+
+def test_cli_quiet_hides_banners(tmp_path, monkeypatch, capsys):
+    config = {
+        "pipelines": {
+            "default": [{"step": {"name": "hello", "script": ["echo hello"]}}],
+        }
+    }
+    _write_pipeline(tmp_path, config)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--mode", "host", "--quiet"],
+    )
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Step 1/1" not in captured.out
+    assert "Pipeline passed" in captured.out
+
+
+def test_cli_env_file_and_cli_override(tmp_path, monkeypatch, capsys):
+    _write_pipeline(
+        tmp_path,
+        {
+            "pipelines": {
+                "default": [
+                    {
+                        "step": {
+                            "name": "show",
+                            "script": ['echo "ENV=$ENVIRONMENT"'],
+                        }
+                    }
+                ]
+            }
+        },
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENVIRONMENT=fromfile\nAPI_KEY=file-secret\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bb-run",
+            "--repo",
+            str(tmp_path),
+            "--mode",
+            "host",
+            "--env-file",
+            str(env_file),
+            "-v",
+            "ENVIRONMENT=fromcli",
+            "--verbose",
+        ],
+    )
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "ENVIRONMENT=fromcli" in captured.out
+    assert "API_KEY=***" in captured.out
+    assert "file-secret" not in captured.out
+
+
+def test_cli_doctor_json(tmp_path, monkeypatch, capsys):
+    _write_pipeline(
+        tmp_path,
+        {"pipelines": {"default": [{"step": {"name": "t", "script": ["true"]}}]}},
+    )
+    monkeypatch.setattr(
+        "bbrun.doctor.docker_daemon_status",
+        lambda: (False, "docker CLI not found"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--doctor", "--json"],
+    )
+    exit_code = cli.main()
+    data = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert data["ok"] is True
+    assert data["valid"] is True
+    assert data["mode"] == "host"
+    assert data["auto_target"] == "default"
+    assert data["cred_helper_missing"] is None
+
+
+def test_cli_doctor_missing_pipeline(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--doctor"],
+    )
+    exit_code = cli.main()
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "No bitbucket-pipelines.yml" in captured.out
+
+
+def test_cli_validate_json_includes_error(tmp_path, monkeypatch, capsys):
+    (tmp_path / "bitbucket-pipelines.yml").write_text("image: python:3.12\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--validate", "--json"],
+    )
+    exit_code = cli.main()
+    data = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert data["valid"] is False
+    assert "pipelines" in (data["error"] or "").lower()
+
+
+def test_cli_check_alias(tmp_path, monkeypatch, capsys):
+    _write_pipeline(
+        tmp_path,
+        {"pipelines": {"default": [{"step": {"name": "t", "script": ["true"]}}]}},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["bb-run", "--repo", str(tmp_path), "--check"],
+    )
+    assert cli.main() == 0
+    assert "Valid bitbucket-pipelines.yml" in capsys.readouterr().out
+
